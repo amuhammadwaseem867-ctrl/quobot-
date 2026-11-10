@@ -54,7 +54,12 @@ def send(text: str, html: bool = False) -> bool:
         return False
     try:
         extra = {"parse_mode": "HTML", "disable_web_page_preview": "true"} if html else {}
-        _call("sendMessage", token, chat_id=chat, text=text, **extra)
+        try:
+            _call("sendMessage", token, chat_id=chat, text=text, **extra)
+        except RuntimeError as e:
+            if not html or "parse" not in str(e).lower():
+                raise
+            _call("sendMessage", token, chat_id=chat, text=_strip_tags(text))  # formatting failed: send plain
         return True
     except RuntimeError as e:
         print(f"Telegram send failed: {e}", file=sys.stderr)
@@ -83,6 +88,12 @@ def get_updates(token: str, offset: int | None, wait: int) -> list[dict]:
     return _call("getUpdates", token, http_timeout=wait + 15, **data)
 
 
+def _strip_tags(text: str) -> str:
+    import html as _html
+    import re
+    return _html.unescape(re.sub(r"</?(b|i|code)>", "", text))
+
+
 def send_to(chat_id: str, text: str, html: bool = False) -> None:
     token, _ = credentials()
     extra = {"parse_mode": "HTML", "disable_web_page_preview": "true"} if html else {}
@@ -96,4 +107,9 @@ def send_to(chat_id: str, text: str, html: bool = False) -> None:
             cur = f"{cur}\n\n{block}" if cur else block
     chunks.append(cur)
     for c in chunks:
-        _call("sendMessage", token, chat_id=chat_id, text=c, **extra)
+        try:
+            _call("sendMessage", token, chat_id=chat_id, text=c, **extra)
+        except RuntimeError as e:
+            if not html or "parse" not in str(e).lower():
+                raise
+            _call("sendMessage", token, chat_id=chat_id, text=_strip_tags(c))

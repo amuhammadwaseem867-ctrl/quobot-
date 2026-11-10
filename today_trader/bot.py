@@ -21,7 +21,7 @@ INTERVALS = {"1m", "2m", "5m", "15m", "30m", "1h"}
 class QuobotChat:
     def __init__(self, symbols, interval, threshold=DEFAULT_THRESHOLD, min_agree=2,
                  history=10000, demo=False, disclaimer="", study_fn=None,
-                 picks_every=5, picks_from=None, top=3, send_empty=True):
+                 picks_every=5, picks_from=None, top=3, send_empty=True, min_winrate=0.0):
         self.symbols, self.interval = list(symbols), interval
         self.threshold, self.min_agree = threshold, min_agree
         self.history, self.demo, self.disclaimer = history, demo, disclaimer
@@ -29,6 +29,7 @@ class QuobotChat:
         self.picks_every, self.top, self.send_empty = picks_every, top, send_empty
         self.picks_from = list(picks_from) if picks_from else list(symbols)
         self.pending: list = []
+        self.min_winrate = min_winrate
 
     # ---- replies --------------------------------------------------------
     def read_text(self, symbol: str, interval: str | None = None) -> str:
@@ -99,7 +100,7 @@ class QuobotChat:
         from .picks import find_picks, log_pick
         from .tg_format import picks_message
         found, stats = find_picks(self.picks_from, self.interval, self.top, self.threshold,
-                                  self.demo, self.history, study_fn=self.study_fn)
+                                  self.demo, self.history, study_fn=self.study_fn, min_winrate=self.min_winrate)
         for p, _ in found:
             if not any(q.symbol == p.symbol and q.end_time == p.end_time for q in self.pending):
                 self.pending.append(p)

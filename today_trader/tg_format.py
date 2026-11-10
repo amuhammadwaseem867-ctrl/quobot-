@@ -323,7 +323,7 @@ def picks_message(picks, stats: dict, interval: str, next_check: pd.Timestamp | 
         out.append(f"😴 <b>No safe trades right now.</b>")
         out.append(f"Checked {stats.get('scanned', 0)} assets: {stats.get('signals', 0)} had a signal, "
                    f"{stats.get('rejected', 0)} failed a safety check.")
-        out.append("Not trading is the safe choice when nothing passes.")
+        out.append("Not trading is the safe choice when nothing passes. 🧘")
     for i, (p, m) in enumerate(picks, 1):
         icon, word = ("🟢", "CALL ⬆️ UP") if p.direction == "CALL" else ("🔴", "PUT ⬇️ DOWN")
         entry, end = pd.Timestamp(p.entry_time), pd.Timestamp(p.end_time)
@@ -332,6 +332,9 @@ def picks_message(picks, stats: dict, interval: str, next_check: pd.Timestamp | 
         out += ["",
                 f"<b>{i}. {icon} {escape(p.symbol)} — {word}</b>",
                 f"🛡 Safety: {strength_bar(p.safety)} <b>{p.safety:.0f}</b>/100",
+                (f"🎯 Win chance: <b>{p.win_chance:.0%}</b> (likely {p.win_low:.0%}-{p.win_high:.0%}, "
+                 f"from {escape(p.win_basis)})" if not math.isnan(p.win_chance)
+                 else "🎯 Win chance: not enough history yet"),
                 f"🕯 Candle: <b>{p.interval}</b> · ⏱ Expiry: <b>{mins} min</b>",
                 f"🕐 Enter at <b>{lt.hhmm(entry)}</b> · ends <b>{lt.hhmm(end)}</b>",
                 f"💰 Price now <code>{_p(p.entry_price)}</code>"

@@ -132,6 +132,11 @@ today's score. Every pick is saved in `quobot_picks.csv` as your journal. `/pick
 now and `/results` shows today's wins and losses. Results use public prices, which can differ a
 little from Quotex's.
 
+Each pick shows a **🎯 win chance** with a likely range, taken from real history (the study's
+result on unseen data, or the asset's track record). **Strict mode** `--min-winrate 0.6` only
+sends picks whose estimated win chance is 60% or more; expect very few picks. No method gives a
+real 90%: anything that claims it is overfitted or a scam.
+
 Options: `--picks-every 10` (minutes, 0 = off), `--top 5`, `--quiet` (no message when there are
 no picks), `--alerts` (also alert on every watchlist signal, the old behaviour).
 

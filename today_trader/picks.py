@@ -44,8 +44,28 @@ class Pick:
     score: float
     confluence: int
     reasons: str
+    win_chance: float = float("nan")   # estimated from history
+    win_low: float = float("nan")
+    win_high: float = float("nan")
+    win_basis: str = ""
     result: str = ""      # WIN / LOSS / DRAW
     exit_price: float = float("nan")
+
+
+def win_chance(m) -> tuple[float, float, float, str]:
+    """Best honest estimate of the win chance and its likely range.
+    Uses the unseen-data result of the study if it has enough trades,
+    otherwise this asset's track record for similar-strength signals."""
+    from .study import wilson
+    L = m.learned
+    if L and L.get("test") and L["test"].get("trades", 0) >= 20:
+        t = L["test"]
+        lo, hi = wilson(t["win_rate"], t["trades"])
+        return t["win_rate"], lo, hi, f"study on unseen data, {t['trades']} trades"
+    if m.samples >= 20:
+        lo, hi = wilson(m.hit_rate, m.samples)
+        return m.hit_rate, lo, hi, f"track record, {m.samples} similar signals"
+    return float("nan"), float("nan"), float("nan"), "not enough history"
 
 
 def safety_score(m, payout: float = 0.85) -> tuple[float, list[str]]:
@@ -82,7 +102,8 @@ def safety_score(m, payout: float = 0.85) -> tuple[float, list[str]]:
 
 
 def find_picks(symbols, interval: str, top: int = 3, threshold: float = DEFAULT_THRESHOLD,
-               demo: bool = False, history: int = 10000, payout: float = 0.85, study_fn=None):
+               demo: bool = False, history: int = 10000, payout: float = 0.85, study_fn=None,
+               min_winrate: float = 0.0):
     """Returns (picks, stats) where stats explains how many were filtered."""
     sigs, errors = analyze_many(symbols, interval, threshold, demo, min_agree=3)
     candidates = [s for s in sigs if s.direction != "WAIT"][: max(top * 3, 8)]
@@ -100,6 +121,9 @@ def find_picks(symbols, interval: str, top: int = 3, threshold: float = DEFAULT_
         except Exception:
             continue
         safety, rejects = safety_score(m, payout)
+        wc, wlo, whi, basis = win_chance(m)
+        if min_winrate and (math.isnan(wc) or wc < min_winrate):
+            rejects.append(f"win chance below {min_winrate:.0%}")
         if rejects:
             rejected += 1
             continue
@@ -109,6 +133,7 @@ def find_picks(symbols, interval: str, top: int = 3, threshold: float = DEFAULT_
             expiry=expiry, entry_time=entry.isoformat(), end_time=(entry + step * expiry).isoformat(),
             entry_price=m.signal.price, stop=m.stop, safety=round(safety, 1), score=round(m.signal.score, 1),
             confluence=m.signal.confluence, reasons=" | ".join(m.why[:3]),
+            win_chance=wc, win_low=wlo, win_high=whi, win_basis=basis,
         )
         picks.append((p, m))
     picks.sort(key=lambda x: -x[0].safety)

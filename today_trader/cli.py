@@ -53,21 +53,22 @@ def run_scan(symbols, interval, threshold, demo, verbose, min_confluence=0):
         print(f"  {sym:<9} error: {e}", file=sys.stderr)
 
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    print(f"\nQuobot market scan  |  {interval} candles  |  {now}" + ("  |  DEMO DATA" if demo else ""))
+    print(f"\n📡 Quobot market scan  |  {interval} candles  |  {now}" + ("  |  DEMO DATA" if demo else ""))
     print("-" * 86)
-    print(f"{'Asset':<9} {'Price':>12}  {'Score':>6}  {'Bias':<11} {'Agree':<5} {'Regime':<9} {'RSI':>4}  Strength")
+    print(f"   {'Asset':<9} {'Price':>12}  {'Score':>6}  {'Bias':<11} {'Agree':<5} {'Regime':<9} {'RSI':>4}  Strength")
     for s in results:
-        print(f"{s.symbol:<9} {fmt_price(s.price):>12}  {s.score:>+6.0f}  {s.direction:<11} {s.confluence}/4   "
+        icon = "🟢" if s.direction.startswith("CALL") else "🔴" if s.direction.startswith("PUT") else "⚪"
+        print(f"{icon} {s.symbol:<9} {fmt_price(s.price):>12}  {s.score:>+6.0f}  {s.direction:<11} {s.confluence}/4   "
               f"{s.regime:<9} {s.rsi:>4.0f}  {bar(s.score)}")
         if verbose or s.direction != "WAIT":
             for r in s.reasons:
-                print(f"{'':12}- {r}")
+                print(f"{'':12}• {r}")
             if s.supports or s.resistances:
                 sup = ", ".join(f"{fmt_price(p)} ({n}x)" for p, n in s.supports) or "none nearby"
                 res = ", ".join(f"{fmt_price(p)} ({n}x)" for p, n in s.resistances) or "none nearby"
                 print(f"{'':12}- Support: {sup} | Resistance: {res}")
             for w in s.warnings:
-                print(f"{'':12}! {w}")
+                print(f"{'':12}⚠️ {w}")
     print("-" * 86)
     print("Agree = how many of the 4 groups (trend, momentum, reversal, price action) back the bias.")
     print(DISCLAIMER + "\n")
@@ -154,7 +155,7 @@ def cmd_bot(args):
     picks_from = assets.expand(args.picks_from) if args.picks_from else args.symbols
     chat = QuobotChat(args.symbols, args.interval, args.threshold, args.min_agree, HISTORY, args.demo, DISCLAIMER,
                       study_fn=run_study, picks_every=args.picks_every, picks_from=picks_from, top=args.top,
-                      send_empty=not args.quiet)
+                      send_empty=not args.quiet, min_winrate=args.min_winrate)
     chat.run(INTERVAL_SECONDS.get(args.interval, 60), make_alerter(args) if args.alerts else None)
 
 
@@ -162,7 +163,7 @@ def cmd_picks(args):
     from .picks import find_picks
     from .tg_format import picks_message
     found, stats = find_picks(args.symbols, args.interval, args.top, args.threshold, args.demo, HISTORY,
-                              study_fn=run_study)
+                              study_fn=run_study, min_winrate=args.min_winrate)
     print(plain(picks_message(found, stats, args.interval)))
 
 
@@ -238,6 +239,11 @@ def cmd_risk(args):
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):  # emojis on older Windows consoles
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
     p = argparse.ArgumentParser(prog="today_trader", description="Market analysis signals for the assets you trade.")
     sub = p.add_subparsers(dest="cmd", required=True)
 
@@ -272,11 +278,14 @@ def main(argv=None):
     bt.add_argument("--top", type=int, default=3, help="how many picks per round (default 3)")
     bt.add_argument("--alerts", action="store_true", help="also alert on every new watchlist signal")
     bt.add_argument("--quiet", action="store_true", help="don't send a message when there are no safe picks")
+    bt.add_argument("--min-winrate", type=float, default=0.0,
+                    help="strict mode: only picks whose estimated win chance is at least this, e.g. 0.6")
     bt.set_defaults(func=cmd_bot)
 
     pk = sub.add_parser("picks", help="find the safest trades right now (one round)")
     common(pk)
     pk.add_argument("--top", type=int, default=3)
+    pk.add_argument("--min-winrate", type=float, default=0.0)
     pk.set_defaults(func=cmd_picks)
 
     b = sub.add_parser("backtest", help="measure how past signals would have done")
