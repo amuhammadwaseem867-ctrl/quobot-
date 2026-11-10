@@ -26,6 +26,7 @@ DISCLAIMER = (
 )
 
 DEFAULT_WATCHLIST = ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "EURJPY", "XAUUSD", "BTCUSDT", "ETHUSDT"]
+HISTORY = 4000  # candles loaded for the track record (Binance gives at most 1000)
 INTERVAL_SECONDS = {"1m": 60, "2m": 120, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600}
 
 
@@ -112,7 +113,7 @@ def cmd_watch(args):
         for s in results:
             if s.direction != "WAIT" and last_alert.get(s.symbol) != s.direction:
                 try:
-                    df = data.fetch(s.symbol, s.interval, 1000, demo=args.demo)
+                    df = data.fetch(s.symbol, s.interval, HISTORY, demo=args.demo)
                     m = read_market(df, s.symbol, s.interval, data.is_crypto(s.symbol), 1, args.threshold)
                     text = format_read(m)
                 except Exception:
@@ -150,7 +151,7 @@ def cmd_backtest(args):
 def cmd_read(args):
     for sym in args.symbols:
         try:
-            df = data.fetch(sym, args.interval, 1000, demo=args.demo)
+            df = data.fetch(sym, args.interval, HISTORY, demo=args.demo)
             m = read_market(df, sym, args.interval, data.is_crypto(sym), args.expiry, args.threshold)
             print("\n" + "=" * 78 + "\n" + format_read(m, args.payout))
         except Exception as e:
