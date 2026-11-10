@@ -64,6 +64,10 @@ def verdict(m: MarketRead, payout: float = 0.85) -> tuple[str, str]:
                              f"{m.hit_rate:.0%} of the time. Still not guaranteed; stick to your stake size.")
 
 
+def lean_dir(m) -> int:
+    return m.lean or (1 if m.signal.score > 0 else -1)
+
+
 def read_message(m: MarketRead, alert: bool = False, payout: float = 0.85) -> str:
     s = m.signal
     be = 1 / (1 + payout)
@@ -89,6 +93,13 @@ def read_message(m: MarketRead, alert: bool = False, payout: float = 0.85) -> st
         f"<b>🧭 Verdict: {v_label}</b>",
         escape(v_text),
         "",
+    ]
+    if s.direction != "WAIT" and m.why:
+        why, risk = explain(m, 3)
+        out.append(f"<b>🔮 Prediction: {'UP ⬆️' if lean_dir(m) > 0 else 'DOWN ⬇️'} because…</b>")
+        out += [f"  {n}. {escape(r)}" for n, r in enumerate(why, 1)]
+        out += [f"⚠️ {escape(risk)}", ""]
+    out += [
         "<b>🤝 Agreement</b> <i>(4 groups of indicators; more agreeing = stronger)</i>",
     ]
     lean = m.lean
@@ -316,6 +327,74 @@ def study_message(r) -> str:
     return "\n".join(out)
 
 
+# indicator label -> plain-language reason (UP version, DOWN version)
+PLAIN = {
+    "EMA 9 above EMA 21": "short-term trend is up (fast average above slow average)",
+    "EMA 9 below EMA 21": "short-term trend is down (fast average below slow average)",
+    "price above EMA 50": "price is above its 50-candle average, so buyers control the bigger move",
+    "price below EMA 50": "price is below its 50-candle average, so sellers control the bigger move",
+    "buyers stronger (+DI > -DI)": "buying pressure is stronger than selling pressure",
+    "sellers stronger (-DI > +DI)": "selling pressure is stronger than buying pressure",
+    "Supertrend up": "Supertrend has flipped to an uptrend",
+    "Supertrend down": "Supertrend has flipped to a downtrend",
+    "Heikin Ashi candle green": "smoothed candles are green",
+    "Heikin Ashi candle red": "smoothed candles are red",
+    "MACD positive": "momentum is positive",
+    "MACD negative": "momentum is negative",
+    "MACD rising": "momentum is getting stronger upward",
+    "MACD falling": "momentum is getting stronger downward",
+    "RSI oversold": "RSI says it fell too far too fast, a bounce is likely",
+    "RSI overbought": "RSI says it rose too far too fast, a pullback is likely",
+    "below lower Bollinger band (stretched down)": "price is stretched below its normal range and tends to snap back up",
+    "above upper Bollinger band (stretched up)": "price is stretched above its normal range and tends to snap back down",
+    "Stochastic turning up from oversold": "Stochastic is turning up from the bottom",
+    "Stochastic turning down from overbought": "Stochastic is turning down from the top",
+    "CCI below -100": "CCI shows an oversold extreme",
+    "CCI above +100": "CCI shows an overbought extreme",
+    "Williams %R oversold": "Williams %R is oversold",
+    "Williams %R overbought": "Williams %R is overbought",
+    "bullish candle pattern": "the last candles formed a bullish pattern",
+    "bearish candle pattern": "the last candles formed a bearish pattern",
+    "bounce off support / break above resistance": "price bounced off support or broke above resistance",
+    "rejection at resistance / break below support": "price was rejected at resistance or broke below support",
+    "bullish RSI divergence": "price made a lower low but RSI didn't: sellers are running out",
+    "bearish RSI divergence": "price made a higher high but RSI didn't: buyers are running out",
+}
+# price action first, then trend, then momentum, then oscillators
+PRIORITY = ["candle pattern", "support", "resistance", "divergence", "Supertrend", "EMA 50", "EMA 9", "DI", "MACD"]
+
+
+def _rank(label: str) -> int:
+    for i, key in enumerate(PRIORITY):
+        if key in label:
+            return i
+    return len(PRIORITY)
+
+
+def explain(m, max_reasons: int = 4) -> list[str]:
+    """Plain-language reasons for the prediction, most important first,
+    plus the main risk."""
+    s = m.signal
+    up = m.lean > 0
+    lines = []
+    reasons = sorted(m.why, key=_rank)
+    story = {x.split(":")[0]: x for x in m.story}
+    candle = story.get("Last candle")
+    for r in reasons[:max_reasons]:
+        text = PLAIN.get(r, r)
+        if "candle pattern" in r and candle:
+            text = f"the last candle shows a {candle.split(':', 1)[1].strip().rstrip('.')}"
+        lines.append(text[0].upper() + text[1:] + ".")
+    big = story.get("Bigger picture")
+    if big and (("up" in big and up) or ("down" in big and not up)):
+        lines.append("The bigger timeframe agrees, so this goes with the main trend.")
+    lv = story.get("Levels")
+    if lv:
+        lines.append(lv.replace("Levels: ", "Levels: ").rstrip(".") + ".")
+    risk = [PLAIN.get(a, a) for a in sorted(m.against, key=_rank)[:2]]
+    return lines, ("Risk: " + "; ".join(risk) + ".") if risk else "Risk: nothing major against it right now."
+
+
 def picks_message(picks, stats: dict, interval: str, next_check: pd.Timestamp | None = None) -> str:
     now = pd.Timestamp.now(tz="UTC")
     out = [f"🎯 <b>Safe picks</b> · {lt.hhmm(now)} ({lt.label()})", LINE]
@@ -340,8 +419,11 @@ def picks_message(picks, stats: dict, interval: str, next_check: pd.Timestamp | 
                 f"💰 Price now <code>{_p(p.entry_price)}</code>"
                 + ("" if math.isnan(p.stop) else
                    f" · wrong if {'below' if p.direction == 'CALL' else 'above'} <code>{_p(p.stop)}</code>"),
-                f"🤝 {p.confluence}/4 groups agree · 📈 track record {hit}",
-                f"💡 {escape(p.reasons)}"]
+                f"🤝 {p.confluence}/4 groups agree · 📈 track record {hit}"]
+        why, risk = explain(m)
+        out.append(f"🧠 <b>Why {'UP' if p.direction == 'CALL' else 'DOWN'}:</b>")
+        out += [f"  {n}. {escape(r)}" for n, r in enumerate(why, 1)]
+        out.append(f"⚠️ {escape(risk)}")
     if next_check is not None:
         out += ["", f"⏭ Next check at {lt.hhmm(next_check)}. I'll send the result of each pick after it ends."]
     out += ["", "<i>Send the asset name (e.g. EURUSD) for the full explanation.</i>", DISCLAIMER_SHORT]

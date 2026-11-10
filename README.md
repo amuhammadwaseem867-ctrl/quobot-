@@ -120,7 +120,9 @@ checks, ranked by a safety score (0-100). Each pick says:
 - the **asset** and **CALL ⬆️ / PUT ⬇️**
 - the **candle** timeframe and the **expiry** to set
 - the **entry time** and **end time** in Pakistan time
-- the current price, the "wrong if" level, agreement and track record, and the top reasons
+- the current price, the "wrong if" level, agreement and track record
+- **🧠 Why UP / Why DOWN:** the reasons in plain sentences (most important first: candle pattern,
+  support/resistance, divergence, trend, momentum), plus the main **⚠️ Risk** against it
 
 A pick must have 3+ of 4 groups agreeing, a normal market (not against the bigger trend, not
 too quiet or spiking, good session, market open), a track record above break-even, past studies
