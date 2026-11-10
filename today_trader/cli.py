@@ -134,7 +134,7 @@ def cmd_backtest(args):
     be = 1 / (1 + args.payout)
     for sym in args.symbols:
         try:
-            df = data.fetch(sym, args.interval, 1000, demo=args.demo)
+            df = data.fetch(sym, args.interval, HISTORY, demo=args.demo)
             c = data.is_crypto(sym)
             r = backtest(df, sym, args.expiry, args.threshold, args.payout, crypto=c)
             raw = backtest(df, sym, args.expiry, args.threshold, args.payout, crypto=c, use_filters=False)
