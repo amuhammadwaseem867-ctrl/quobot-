@@ -17,7 +17,8 @@ from datetime import datetime, timezone
 from . import data, risk, telegram
 from .bot import QuobotChat
 from .market_read import format_read, read_market
-from .tg_format import read_message
+from .study import SETTINGS_FILE, load_study, save_study, study
+from .tg_format import read_message, study_message
 from .backtest import backtest
 from .signals import DEFAULT_THRESHOLD, analyze
 
@@ -28,7 +29,7 @@ DISCLAIMER = (
 )
 
 DEFAULT_WATCHLIST = ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "EURJPY", "XAUUSD", "BTCUSDT", "ETHUSDT"]
-HISTORY = 4000  # candles loaded for the track record (Binance gives at most 1000)
+HISTORY = 10000  # candles of history to learn from (Yahoo 1m keeps ~30 days)
 INTERVAL_SECONDS = {"1m": 60, "2m": 120, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600}
 
 
@@ -111,10 +112,18 @@ def make_alerter(args):
     def alert():
         results = run_scan(args.symbols, args.interval, args.threshold, args.demo, args.verbose, args.min_agree)
         for s in results:
+            learned = load_study(s.symbol, s.interval)
+            expiry = 1
+            if learned and learned.get("best"):
+                b = learned["best"]
+                if not learned.get("recommended") or abs(s.score) < b["threshold"] or s.confluence < b["min_agree"]:
+                    last_alert[s.symbol] = "WAIT"  # study says this asset/setup isn't worth an alert
+                    continue
+                expiry = b["expiry"]
             if s.direction != "WAIT" and last_alert.get(s.symbol) != s.direction:
                 try:
                     df = data.fetch(s.symbol, s.interval, HISTORY, demo=args.demo)
-                    m = read_market(df, s.symbol, s.interval, data.is_crypto(s.symbol), 1, args.threshold)
+                    m = read_market(df, s.symbol, s.interval, data.is_crypto(s.symbol), expiry, args.threshold)
                     telegram.send(read_message(m, alert=True), html=True)
                 except Exception:
                     telegram.send(f"{s.symbol} {s.interval}: {s.direction}, score {s.score:+.0f}\n\n{DISCLAIMER}")
@@ -135,7 +144,15 @@ def cmd_watch(args):
 
 
 def cmd_bot(args):
-    chat = QuobotChat(args.symbols, args.interval, args.threshold, args.min_agree, HISTORY, args.demo, DISCLAIMER)
+    print("Learning from history first (this takes a minute)...")
+    for sym in args.symbols:
+        try:
+            r = run_study(sym, args.interval, args.demo)
+            print(f"  {sym}: {r.verdict}")
+        except Exception as e:
+            print(f"  {sym}: couldn't study ({type(e).__name__})", file=sys.stderr)
+    chat = QuobotChat(args.symbols, args.interval, args.threshold, args.min_agree, HISTORY, args.demo, DISCLAIMER,
+                      study_fn=run_study)
     chat.run(INTERVAL_SECONDS.get(args.interval, 60), make_alerter(args))
 
 
@@ -171,6 +188,28 @@ def cmd_read(args):
         except Exception as e:
             print(f"{sym}: error: {e}", file=sys.stderr)
     print("=" * 78 + "\n" + DISCLAIMER + "\n")
+
+
+def run_study(symbol, interval, demo=False, payout=0.85, quiet=False):
+    df = data.fetch(symbol, interval, HISTORY, demo=demo)
+    r = study(df, symbol, interval, data.is_crypto(symbol), payout)
+    save_study(r)
+    return r
+
+
+def cmd_study(args):
+    import html
+    import re
+    for sym in args.symbols:
+        try:
+            print(f"Studying {sym} {args.interval}...")
+            r = run_study(sym, args.interval, args.demo, args.payout)
+            text = html.unescape(re.sub(r"</?(b|i|code)>", "", study_message(r)))
+            print(text + "\n")
+        except Exception as e:
+            print(f"{sym}: error: {e}", file=sys.stderr)
+    print(f"Saved to {SETTINGS_FILE}. The market read and the bot use these settings now.")
+    print(DISCLAIMER + "\n")
 
 
 def cmd_risk(args):
@@ -221,6 +260,11 @@ def main(argv=None):
     rd.add_argument("--expiry", type=int, default=1, help="prediction horizon in candles (default 1)")
     rd.add_argument("--payout", type=float, default=0.85)
     rd.set_defaults(func=cmd_read)
+
+    st = sub.add_parser("study", help="learn from up to 10,000 past candles: best settings, checked on unseen data")
+    common(st)
+    st.add_argument("--payout", type=float, default=0.85)
+    st.set_defaults(func=cmd_study)
 
     r = sub.add_parser("risk", help="stake size and daily stop for your balance")
     r.add_argument("balance", type=float, help="your account balance")

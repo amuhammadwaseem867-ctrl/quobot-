@@ -133,3 +133,28 @@ def test_bot_replies():
         p = TagCheck()
         p.feed(r)
         assert not p.stack and len(r) < 4096
+
+
+def test_study_finds_no_edge_in_noise_and_saves(tmp_path):
+    from today_trader.study import load_study, save_study, similar_setups, study
+    rng = np.random.default_rng(1)
+    n = 6000
+    close = 1.1 * np.exp(np.cumsum(rng.normal(0, 0.001, n)))
+    o = np.r_[close[0], close[:-1]]
+    sp = np.abs(rng.normal(0, 0.0006, n)) * close
+    df = pd.DataFrame({"open": o, "high": np.maximum(o, close) + sp, "low": np.minimum(o, close) - sp,
+                       "close": close, "volume": 1.0},
+                      index=pd.date_range("2026-10-05", periods=n, freq="1min", tz="UTC"))
+    r = study(df, "RW", "1m")
+    assert r.test is None or r.test["trades"] < 20 or r.test_low < 0.5  # no fake edge on unseen noise
+    sim = similar_setups(df)
+    assert sim.matches > 0 and sim.low < 0.5 < sim.high
+    f = tmp_path / "s.json"
+    save_study(r, f)
+    assert load_study("RW", "1m", f) is not None
+
+
+def test_local_time_is_pakistan_by_default(monkeypatch):
+    from today_trader import localtime
+    monkeypatch.delenv("TIMEZONE", raising=False)
+    assert localtime.hhmm(pd.Timestamp("2026-11-10 16:00", tz="UTC")) == "9:00 PM"

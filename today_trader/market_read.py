@@ -27,6 +27,8 @@ class MarketRead:
     groups: dict = field(default_factory=dict)
     lean: int = 0
     stop: float = float("nan")
+    similar: object = None   # study.SimilarResult
+    learned: dict | None = None
 
 
 def _fmt(p: float) -> str:
@@ -131,10 +133,13 @@ def read_market(df: pd.DataFrame, symbol: str, interval: str, crypto: bool = Fal
     exp = f"Typical move over {expiry} candle(s): about {_fmt(move)} (from ATR)."
 
     from .signals import GROUPS
+    from .study import load_study, similar_setups
+    sim = similar_setups(df, expiry, crypto=crypto, d=d)
     return MarketRead(sig, pred, expiry, story, why, against, inval, exp, hr, n,
                       {e: v for e, v in hit_by.items()},
                       groups={g: int(row[f"group_{g}"]) for g in GROUPS}, lean=lean,
-                      stop=float(stop) if sign else float("nan"))
+                      stop=float(stop) if sign else float("nan"),
+                      similar=sim if sim.matches else None, learned=load_study(symbol, interval))
 
 
 def format_read(m: MarketRead, payout: float = 0.85) -> str:
@@ -160,6 +165,12 @@ def format_read(m: MarketRead, payout: float = 0.85) -> str:
             out.append(f"By expiry: {others}.")
     elif m.samples:
         out.append(f"Track record: only {m.samples} similar cases in the loaded history, too few to judge.")
+    if m.similar is not None:
+        sm = m.similar
+        out.append(f"Similar past moments: {sm.matches} closest matches out of {sm.history} candles; price went UP "
+                   f"{sm.up_rate:.0%} of the time over {sm.expiry} candle(s) (likely range {sm.low:.0%}-{sm.high:.0%}).")
+    if m.learned:
+        out.append(f"Study: {m.learned['verdict']}")
     for w in s.warnings:
         out.append(f"! {w}")
     return "\n".join(out)

@@ -8,7 +8,8 @@ import time
 
 from . import data, risk, telegram
 from .market_read import read_market
-from .tg_format import HELP_MESSAGE, read_message, risk_message, scan_message
+from .study import load_study
+from .tg_format import HELP_MESSAGE, read_message, risk_message, scan_message, sessions_message, study_message
 from .signals import DEFAULT_THRESHOLD, analyze
 
 INTERVALS = {"1m", "2m", "5m", "15m", "30m", "1h"}
@@ -16,16 +17,19 @@ INTERVALS = {"1m", "2m", "5m", "15m", "30m", "1h"}
 
 class QuobotChat:
     def __init__(self, symbols, interval, threshold=DEFAULT_THRESHOLD, min_agree=2,
-                 history=4000, demo=False, disclaimer=""):
+                 history=10000, demo=False, disclaimer="", study_fn=None):
         self.symbols, self.interval = list(symbols), interval
         self.threshold, self.min_agree = threshold, min_agree
         self.history, self.demo, self.disclaimer = history, demo, disclaimer
+        self.study_fn = study_fn
 
     # ---- replies --------------------------------------------------------
     def read_text(self, symbol: str, interval: str | None = None) -> str:
         iv = interval or self.interval
         df = data.fetch(symbol, iv, self.history, demo=self.demo)
-        m = read_market(df, symbol, iv, data.is_crypto(symbol), 1, self.threshold)
+        learned = load_study(symbol, iv)
+        expiry = learned["best"]["expiry"] if learned and learned.get("best") else 1
+        m = read_market(df, symbol, iv, data.is_crypto(symbol), expiry, self.threshold)
         return read_message(m)
 
     def scan_text(self) -> str:
@@ -48,6 +52,18 @@ class QuobotChat:
             return HELP_MESSAGE
         if cmd == "/scan":
             return self.scan_text()
+        if cmd == "/sessions":
+            return sessions_message()
+        if cmd == "/study":
+            if len(parts) < 2:
+                return "Send it like this: <code>/study EURUSD</code> (or <code>/study EURUSD 5m</code>)"
+            sym = parts[1].upper()
+            iv = parts[2].lower() if len(parts) > 2 and parts[2].lower() in INTERVALS else self.interval
+            if self.study_fn is None:
+                from .study import study
+                df = data.fetch(sym, iv, self.history, demo=self.demo)
+                return study_message(study(df, sym, iv, data.is_crypto(sym)))
+            return study_message(self.study_fn(sym, iv, self.demo))
         if cmd == "/watchlist":
             return "👀 <b>Watchlist</b> · " + self.interval + "\n" + "\n".join(f"• {x}" for x in self.symbols)
         if cmd == "/risk":

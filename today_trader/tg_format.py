@@ -6,6 +6,8 @@ from html import escape
 
 from .market_read import MarketRead
 from .risk import RiskPlan
+from . import localtime as lt
+import pandas as pd
 
 LINE = "━━━━━━━━━━━━━━━━━━"
 MINUTES = {"1m": 1, "2m": 2, "5m": 5, "15m": 15, "30m": 30, "1h": 60}
@@ -32,6 +34,10 @@ def verdict(m: MarketRead, payout: float = 0.85) -> tuple[str, str]:
         return "⛔ SKIP", "No clear direction right now. Waiting is a position too."
     if any("weekend" in w for w in s.warnings):
         return "⛔ SKIP", "Forex is closed at weekends; Quotex only shows OTC prices, which this bot can't read."
+    L = m.learned
+    if L and L.get("test") and L["test"].get("trades", 0) >= 20 and not L.get("recommended"):
+        return "⛔ SKIP", (f"I studied {L['candles']:,} past candles of {s.symbol}: my signals did not beat "
+                          f"break-even on data I hadn't seen. Better to skip this asset on {s.interval}.")
     if m.samples >= 20 and m.hit_rate < be:
         return "⛔ SKIP", (f"Similar signals on {s.symbol} were right only {m.hit_rate:.0%} of the time, "
                           f"below the {be:.0%} you need to break even.")
@@ -44,6 +50,14 @@ def verdict(m: MarketRead, payout: float = 0.85) -> tuple[str, str]:
         problems.append("volatility is unusual")
     if any("higher-timeframe" in w for w in s.warnings):
         problems.append("it goes against the bigger trend")
+    sm = m.similar
+    if sm is not None and sm.matches >= 50:
+        if (m.lean > 0 and sm.high < 0.5) or (m.lean < 0 and sm.low > 0.5):
+            problems.append("similar past moments mostly went the other way")
+        elif sm.lean == "UNCLEAR":
+            problems.append("similar past moments were a coin flip")
+    if L and L.get("best") and s.confluence < L["best"]["min_agree"]:
+        problems.append(f"my study says wait for {L['best']['min_agree']}/4 agreement on {s.symbol}")
     if problems:
         return "🟡 CAUTION", "Possible setup, but " + ", ".join(problems) + ". Use a small stake or skip."
     return "✅ VALID SETUP", (f"{s.confluence} of 4 groups agree and similar signals were right "
@@ -83,6 +97,24 @@ def read_message(m: MarketRead, alert: bool = False, payout: float = 0.85) -> st
         mark = "✅" if lean and val == lean else "❌" if lean and val == -lean else "➖"
         out.append(f"{mark} {name}")
 
+    step = pd.Timedelta(minutes=MINUTES.get(s.interval, 1))
+    entry = s.time + step               # the signal candle closes -> next candle opens
+    exp_at = entry + step * m.expiry
+    valid_to = entry + min(step, pd.Timedelta(seconds=30)) if step <= pd.Timedelta(minutes=1) else entry + step / 2
+    from .sessions import session_quality
+    _, sess = session_quality(s.time, crypto=s.symbol.upper().endswith(("USDT", "USDC")))
+    out += ["", f"<b>🕐 Timing</b> <i>({lt.label()})</i>"]
+    if s.direction != "WAIT":
+        out += [f"• Enter at: <b>{lt.hhmm(entry)}</b> (start of the next candle)",
+                f"• Set expiry: <b>{mins} min</b> → trade ends at <b>{lt.hhmm(exp_at)}</b>",
+                f"• Too late after: {lt.local(valid_to).strftime('%I:%M:%S %p').lstrip('0')}. If you miss it, skip it."]
+    else:
+        out.append(f"• Last candle closed at {lt.hhmm(entry)}")
+    out.append(f"• Session now: {escape(sess)}")
+    L0 = m.learned
+    if L0 and L0.get("best_hours"):
+        out.append(f"• Best hours for {escape(s.symbol)}: {escape(L0['best_hours'])}")
+
     out += ["", "<b>📖 What the market is doing</b>"]
     out += [f"• {escape(x)}" for x in m.story]
 
@@ -115,6 +147,23 @@ def read_message(m: MarketRead, alert: bool = False, payout: float = 0.85) -> st
     else:
         out.append("➖ No similar cases in recent history")
 
+    sm = m.similar
+    if sm is not None:
+        out += ["", "<b>🧠 Experience</b> <i>(the most similar moments in past data and what happened next)</i>"]
+        arrow = "⬆️" if sm.up_rate > 0.5 else "⬇️"
+        out.append(f"{arrow} Of the {sm.matches} closest matches in {sm.history:,} past candles, price went "
+                   f"<b>UP {sm.up_rate:.0%}</b> / DOWN {1 - sm.up_rate:.0%} over the next {sm.expiry} candle(s)")
+        out.append(f"Likely true range: {sm.low:.0%}-{sm.high:.0%} UP"
+                   + (" → a real lean" if sm.lean != "UNCLEAR" else " → too close to 50/50 to rely on"))
+    L = m.learned
+    if L and L.get("best"):
+        b, t = L["best"], L.get("test") or {}
+        out += ["", "<b>🎓 Learned settings</b> <i>(from /study: tested on older data, checked on newer data)</i>",
+                f"Best: strength ≥{b['threshold']:.0f}, {b['min_agree']}/4 agree, expiry {b['expiry']} candle(s)"]
+        if t.get("trades"):
+            out.append(f"On unseen data: {t['win_rate']:.0%} over {t['trades']} trades")
+        out.append(escape(L["verdict"]))
+
     other = [w for w in s.warnings]
     if other:
         out += ["", "<b>⚠️ Watch out</b>"] + [f"• {escape(w)}" for w in other]
@@ -124,7 +173,8 @@ def read_message(m: MarketRead, alert: bool = False, payout: float = 0.85) -> st
 
 
 def scan_message(rows, interval: str) -> str:
-    out = [f"📡 <b>Market scan</b> · {interval}", LINE]
+    now = pd.Timestamp.now(tz="UTC")
+    out = [f"📡 <b>Market scan</b> · {interval} · {lt.hhmm(now)} ({lt.label()})", LINE]
     for s in rows:
         icon = "🟢" if s.direction.startswith("CALL") else "🔴" if s.direction.startswith("PUT") else "⚪"
         word = "CALL ⬆️" if icon == "🟢" else "PUT ⬇️" if icon == "🔴" else "WAIT"
@@ -155,8 +205,10 @@ HELP_MESSAGE = "\n".join([
     "• <code>EURUSD</code> → full market read with prediction and reasons",
     "• <code>EURUSD 5m</code> → same, on 5-minute candles",
     "• /scan → quick signal for every asset I watch",
+    "• /study EURUSD → replay up to 10,000 past candles, learn the best settings, check them on unseen data",
     "• /risk 100 → stake size and daily stop for a balance of 100",
     "• /watchlist → assets I'm watching",
+    "• /sessions → market session times in your time zone",
     "",
     "<b>On my own</b>",
     "🔔 I message you when a new CALL or PUT appears on your watchlist.",
@@ -166,6 +218,60 @@ HELP_MESSAGE = "\n".join([
     "📊 Strength = how strongly indicators agree (0-100)",
     "🧭 Verdict = ✅ valid / 🟡 caution / ⛔ skip",
     "📈 Track record = how often this signal was right before",
+    "🧠 Experience = what happened after the most similar past moments",
+    "🎓 Learned = best settings from /study, checked on data it never saw",
     "",
     DISCLAIMER_SHORT,
 ])
+
+
+def _loc(utc_label: str) -> str:
+    a, b = utc_label.split()[0].split("-")
+    return lt.utc_hour_range_to_local(int(a), int(b))
+
+
+def best_hours_text(r) -> str:
+    good = [(h, v) for h, v in r.by_hour.items() if v[1] >= 10]
+    if not good:
+        return ""
+    good.sort(key=lambda x: -x[1][0])
+    return ", ".join(f"{_loc(h)} ({v[0]:.0%})" for h, v in good[:2]) + f" {lt.label()}"
+
+
+def sessions_message() -> str:
+    rows = "\n".join(f"• {n}: <b>{t}</b>" for n, t in lt.session_times_local())
+    return "\n".join([f"🌍 <b>Market sessions</b> · {lt.label()}", LINE, rows, "",
+                      f"✅ Best: London + New York overlap, <b>{lt.utc_hour_range_to_local(12, 16)}</b> (most volume, cleanest moves)",
+                      "🟡 OK: London or New York alone", "⚠️ Weaker: Asian session and late night",
+                      "⛔ Forex closed Saturday and Sunday (Quotex shows OTC only)",
+                      "", "<i>Times are approximate and shift by an hour when Europe/US change clocks.</i>"])
+
+
+def study_message(r) -> str:
+    be = 1 / (1 + r.payout)
+    out = [f"🎓 <b>Study: {escape(r.symbol)} · {r.interval}</b>", LINE,
+           f"📚 Replayed <b>{r.candles_replayed:,}</b> past candles as if live",
+           f"🧪 Tested <b>{r.combos_tested}</b> setting combinations (strength, agreement, expiry)"]
+    if not r.best:
+        return "\n".join(out + ["", escape(r.verdict)])
+    b, tr, te = r.best, r.train, r.test
+    icon = "✅" if r.recommended and r.test_low > 0.5 else "🟡" if r.recommended else "⛔"
+    out += ["", "<b>🏆 Best settings (learned on older 70%)</b>",
+            f"Strength ≥{b['threshold']:.0f} · {b['min_agree']}/4 agree · expiry {b['expiry']} candle(s)",
+            f"Older data: {tr['win_rate']:.0%} over {tr['trades']} trades",
+            "", "<b>🔍 Check on newer 30% it never saw</b>",
+            f"{icon} <b>{te['win_rate']:.0%}</b> over {te['trades']} trades (need {be:.0%})" if te["trades"] else "No trades",
+            f"Likely true range: {r.test_low:.0%}-{r.test_high:.0%}",
+            "", f"<b>🧭 Verdict</b>", escape(r.verdict)]
+    if r.by_direction:
+        out += ["", "<b>📊 Details</b>"]
+        out += [f"• {k}: {v[0]:.0%} of {v[1]}" for k, v in r.by_direction.items()]
+        out += [f"• {k}: {v[0]:.0%} of {v[1]}" for k, v in r.by_regime.items()]
+        good = [(h, v) for h, v in r.by_hour.items() if v[1] >= 10]
+        if good:
+            best_h = max(good, key=lambda x: x[1][0])
+            worst_h = min(good, key=lambda x: x[1][0])
+            out.append(f"• Best hours ({lt.label()}): {_loc(best_h[0])} ({best_h[1][0]:.0%}) · "
+                       f"worst: {_loc(worst_h[0])} ({worst_h[1][0]:.0%})")
+    out += ["", "<i>Past results don't guarantee future ones. The 'unseen data' line is the honest one.</i>"]
+    return "\n".join(out)

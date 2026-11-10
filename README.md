@@ -54,6 +54,9 @@ python -m today_trader backtest EURUSD GBPUSD -i 1m --expiry 1 --payout 0.85
 # Plain-language market read: prediction, reasons, what would prove it wrong, track record
 python -m today_trader read EURUSD XAUUSD -i 1m --expiry 1
 
+# Learn from up to 10,000 past candles: best settings, checked on data it never saw
+python -m today_trader study EURUSD GBPUSD XAUUSD -i 1m
+
 # Stake size and daily stop for your balance
 python -m today_trader risk 100
 
@@ -107,6 +110,8 @@ The bot then does two things on its own:
 | `EURUSD 5m` | same, on another timeframe |
 | `/scan` | signal for every asset on the watchlist |
 | `/risk 100` | stake size and daily stop for a balance of 100 |
+| `/study EURUSD` | replay ~10,000 past candles and learn the best settings for that asset |
+| `/sessions` | market session times in your time zone |
 | `/watchlist` | the assets being watched |
 | `/help` | the list of commands |
 
@@ -167,6 +172,33 @@ Telegram alerts from `watch` send this same read.
 
 The "prediction" is a lean based on indicators, not a forecast anyone can guarantee. Trust the
 track-record line more than the prediction: if it says BELOW break-even, skip that asset.
+
+## Learning from history (`study`)
+
+`study` replays up to 10,000 past candles of an asset as if each one were live and records what
+would have happened to every signal. It tries 48 setting combinations (signal strength 30-60,
+2 or 3 of 4 groups agreeing or not, expiry 1/2/3/5 candles) and keeps the best one.
+
+To avoid fooling itself, it picks the settings on the **older 70%** of the data and then checks
+them on the **newer 30% it never saw**. Only that second number tells you how the settings are
+likely to do from here. If they fail on unseen data, the bot says so and stops alerting on that
+asset. Settings are saved in `quobot_settings.json` and used automatically. The `bot` command runs
+a study for every asset on your watchlist when it starts.
+
+Every market read also has an **Experience** section: the bot finds the ~150 past moments that
+looked most like right now (same indicator votes, RSI, trend strength, volatility, bigger trend,
+time of day) and shows how often price went up or down afterwards, with a likely range.
+
+How much history you get: Yahoo keeps 1-minute forex data for about 30 days (roughly 10,000
+candles on weekdays), 5-minute for 60 days. Crypto from Binance goes back as far as you need.
+
+## Time zone
+
+All times are shown in Pakistan time (UTC+5) by default. Each signal says when to enter (the start
+of the next candle), what expiry to set, when the trade ends, and when it's too late to enter.
+To use another time zone, add `TIMEZONE=Asia/Dubai` (or similar) to `.env`. Send `/sessions` to
+the bot for session times; the London + New York overlap (about 5-9 PM in Pakistan) is usually
+the best time to trade forex.
 
 ## Risk management
 
