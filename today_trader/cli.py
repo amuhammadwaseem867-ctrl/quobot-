@@ -155,7 +155,8 @@ def cmd_bot(args):
     picks_from = assets.expand(args.picks_from) if args.picks_from else args.symbols
     chat = QuobotChat(args.symbols, args.interval, args.threshold, args.min_agree, HISTORY, args.demo, DISCLAIMER,
                       study_fn=run_study, picks_every=args.picks_every, picks_from=picks_from, top=args.top,
-                      send_empty=not args.quiet, min_winrate=args.min_winrate)
+                      send_empty=not args.quiet, min_winrate=args.min_winrate,
+                      fx_every=args.fx_every)
     chat.run(INTERVAL_SECONDS.get(args.interval, 60), make_alerter(args) if args.alerts else None)
 
 
@@ -165,6 +166,22 @@ def cmd_picks(args):
     found, stats = find_picks(args.symbols, args.interval, args.top, args.threshold, args.demo, HISTORY,
                               study_fn=run_study, min_winrate=args.min_winrate)
     print(plain(picks_message(found, stats, args.interval)))
+
+
+def cmd_fx(args):
+    from . import forex
+    from .tg_format import fx_message, fx_scan_message
+    cfg = forex.settings_from_env()
+    for key, val in (("balance", args.balance), ("risk_pct", args.risk), ("account", args.account),
+                     ("leverage", args.leverage), ("rr", args.rr)):
+        if val is not None:
+            cfg[key] = val
+    syms = args.symbols or None
+    if syms and len(syms) == 1:
+        print("\n" + plain(fx_message(forex.plan_trade(syms[0], args.interval, demo=args.demo, **cfg))) + "\n")
+        return
+    good, plans, errors = forex.scan(syms, args.interval, args.demo, top=3, **cfg)
+    print("\n" + plain(fx_scan_message(good, plans, errors, args.interval)) + "\n")
 
 
 def cmd_backtest(args):
@@ -280,7 +297,20 @@ def main(argv=None):
     bt.add_argument("--quiet", action="store_true", help="don't send a message when there are no safe picks")
     bt.add_argument("--min-winrate", type=float, default=0.0,
                     help="strict mode: only picks whose estimated win chance is at least this, e.g. 0.6")
+    bt.add_argument("--fx-every", type=int, default=0,
+                    help="also send forex (MT5) trades with SL/TP every N minutes, only when one is valid (0 = off)")
     bt.set_defaults(func=cmd_bot)
+
+    fx = sub.add_parser("fx", help="forex signals for MT5 (XM): BUY/SELL, stop-loss, take-profit, lot size")
+    fx.add_argument("symbols", nargs="*", default=None, help="pairs, e.g. EURUSD XAUUSD (default: majors + gold)")
+    fx.add_argument("-i", "--interval", default="15m", choices=list(INTERVAL_SECONDS))
+    fx.add_argument("--balance", type=float, help="account balance in USD (default FX_BALANCE in .env, or 50)")
+    fx.add_argument("--risk", type=float, help="%% of balance to risk per trade (default FX_RISK, or 1)")
+    fx.add_argument("--account", choices=["micro", "standard"], help="XM account type (default FX_ACCOUNT, or micro)")
+    fx.add_argument("--leverage", type=int, help="account leverage, e.g. 500 (default FX_LEVERAGE, or 500)")
+    fx.add_argument("--rr", type=float, help="take-profit as a multiple of the stop distance (default 2)")
+    fx.add_argument("--demo", action="store_true")
+    fx.set_defaults(func=cmd_fx)
 
     pk = sub.add_parser("picks", help="find the safest trades right now (one round)")
     common(pk)
@@ -324,7 +354,7 @@ def main(argv=None):
 
     telegram.load_env()
     args = p.parse_args(argv)
-    if hasattr(args, "symbols"):
+    if getattr(args, "symbols", None):
         args.symbols = assets.expand(args.symbols)
     try:
         args.func(args)

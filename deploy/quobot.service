@@ -9,7 +9,7 @@ User=quobot
 WorkingDirectory=/opt/quobot
 # Edit the line below to change assets, timeframe or strict mode, then:
 #   sudo systemctl daemon-reload && sudo systemctl restart quobot
-ExecStart=/opt/quobot/.venv/bin/python -m today_trader bot majors XAUUSD BTCUSDT ETHUSDT -i 1m --picks-from all --picks-every 5 --top 3 --min-winrate 0.6
+ExecStart=/opt/quobot/.venv/bin/python -m today_trader bot majors XAUUSD BTCUSDT ETHUSDT -i 1m --picks-from all --picks-every 5 --top 3 --min-winrate 0.6 --fx-every 15
 Restart=always
 RestartSec=30
 Environment=PYTHONUNBUFFERED=1

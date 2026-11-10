@@ -184,3 +184,35 @@ def test_picks_flow(tmp_path, monkeypatch):
     picks.log_pick(p, tmp_path / "log.csv")
     assert "WIN" in result_message(p, {"wins": 1, "losses": 0, "draws": 0})
     assert "Today" in results_message(picks.today_results(tmp_path / "log.csv"))
+
+
+def test_forex_plan_math():
+    from today_trader import forex
+    assert forex.broker_symbol("EURUSD", "micro") == "EURUSDmicro"
+    assert forex.broker_symbol("XAUUSD", "standard") == "GOLD"
+    assert forex.pip_size("USDJPY") == 0.01
+    for sym in forex.FX_DEFAULT:
+        p = forex.plan_trade(sym, "15m", balance=50, risk_pct=1, account="micro", demo=True, history=1500)
+        assert p.action in ("BUY", "SELL", "WAIT")
+        if p.action == "WAIT":
+            continue
+        side = 1 if p.action == "BUY" else -1
+        assert side * (p.target - p.entry) > 0 and side * (p.entry - p.stop) > 0
+        assert abs(abs(p.target - p.entry) - 2 * abs(p.entry - p.stop)) < 1e-9
+        assert p.lots >= 0.01 and abs(round(p.lots * 100) - p.lots * 100) < 1e-6
+        assert abs(p.reward_usd - 2 * p.risk_usd) < 1e-9
+
+
+def test_forex_no_edge_on_random_walk():
+    import numpy as np
+    import pandas as pd
+    from today_trader.forex import tp_before_sl
+    rng = np.random.default_rng(1)
+    n = 6000
+    c = 1.1 * np.exp(np.cumsum(rng.normal(0, 0.001, n)))
+    o = np.r_[c[0], c[:-1]]
+    sp = np.abs(rng.normal(0, 0.0006, n)) * c
+    df = pd.DataFrame({"open": o, "high": np.maximum(o, c) + sp, "low": np.minimum(o, c) - sp, "close": c,
+                       "volume": 1.0}, index=pd.date_range("2026-01-05", periods=n, freq="15min", tz="UTC"))
+    rate, n_trades = tp_before_sl(df, 40, 2, 1.5, 0.00017)
+    assert n_trades > 30 and rate < 0.45   # 1:2 on noise should win about a third

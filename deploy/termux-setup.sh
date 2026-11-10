@@ -25,7 +25,7 @@ cat > "$HOME/start-quobot.sh" <<'RUN'
 termux-wake-lock 2>/dev/null || true   # keep running with the screen off
 cd "$HOME/quobot-"
 while true; do
-  python -m today_trader bot majors XAUUSD BTCUSDT ETHUSDT -i 1m --picks-from all --picks-every 5 --top 3 --min-winrate 0.6
+  python -m today_trader bot majors XAUUSD BTCUSDT ETHUSDT -i 1m --picks-from all --picks-every 5 --top 3 --min-winrate 0.6 --fx-every 15
   echo "Bot stopped, restarting in 30 seconds..."; sleep 30
 done
 RUN

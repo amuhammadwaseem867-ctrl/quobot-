@@ -179,6 +179,22 @@ See **[DEPLOY.md](DEPLOY.md)** (Roman Urdu): rent a small Ubuntu server (Oracle 
 run one command, and the bot keeps going with your PC off. No VPN needed on a server outside Pakistan.
 A `Dockerfile` is included too.
 
+## Forex mode for MT5 (XM)
+
+`python -m today_trader fx` (Telegram: `/fx`, `/fx EURUSD`) gives BUY/SELL trades for forex pairs, gold and silver
+with a stop-loss, a take-profit and a lot size for your balance. Signals only: you place the order in MT5 yourself.
+
+- Stop-loss behind the nearest support/resistance if it is 1-3 ATR away, otherwise 1.5 ATR, plus the spread.
+- Take-profit = stop distance x `--rr` (default 2).
+- Lot size = `FX_RISK`% of `FX_BALANCE` / value of the stop for one lot, rounded down to 0.01.
+  If even 0.01 lots risks too much, the bot says "Skip it".
+- History: on this pair's past candles, how often signals like this reached the take-profit before the stop-loss.
+  At 1:2 you need 33% to break even.
+- Symbol names follow XM (`EURUSDmicro`, `GOLD`); set `FX_ACCOUNT=micro|standard` in `.env`.
+- `bot --fx-every 15` sends forex trades automatically, only when one is valid.
+
+Step-by-step XM and MT5 setup (Roman Urdu): [XM.md](XM.md).
+
 ## How the score works
 
 The bot follows a day trader's checklist. Each candle gets a score from -100 (strongly down) to

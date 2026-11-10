@@ -253,6 +253,8 @@ HELP_MESSAGE = "\n".join([
     "• /results → today's wins and losses of my picks",
     "• /study EURUSD → replay up to 10,000 past candles, learn the best settings, check them on unseen data",
     "• /risk 100 → stake size and daily stop for a balance of 100",
+    "• /fx → forex picks for MT5/XM with stop-loss, take-profit and lot size",
+    "• /fx EURUSD → full forex plan for one pair (balance and risk come from .env)",
     "• /scan forex (or crypto, stocks, indices, commodities, all) → scan a group",
     "• /assets → every asset I know",
     "• /watchlist → assets I'm watching",
@@ -462,3 +464,78 @@ def results_message(tally: dict) -> str:
     if done >= 10 and tally["wins"] / done < 0.54:
         out += ["", "⚠️ Below break-even today. Consider stopping for the day."]
     return "\n".join(out)
+
+
+# ---------------------------------------------------------------------------
+# forex mode (MT5 / XM)
+# ---------------------------------------------------------------------------
+FX_DISCLAIMER = ("<i>⚠️ Not financial advice. Forex with leverage can wipe out a small account fast. "
+                 "Always set the stop-loss in MT5, never move it further away, and risk only money you can lose.</i>")
+
+
+def _fx_price(symbol: str, x: float) -> str:
+    if math.isnan(x):
+        return "-"
+    return f"{x:.3f}" if symbol.endswith("JPY") else (f"{x:.2f}" if symbol in ("XAUUSD",) else f"{x:.5f}")
+
+
+def _fx_card(p, full: bool = True) -> list[str]:
+    icon = {"BUY": "🟢", "SELL": "🔴"}.get(p.action, "⚪")
+    unit = "pips" if p.symbol not in ("XAUUSD", "XAGUSD") else "pips ($0.10 each)" if p.symbol == "XAUUSD" else "pips"
+    out = [f"{icon} <b>{p.action} {escape(p.broker_symbol)}</b>  ·  {p.interval} candles  ·  "
+           f"{p.confluence}/4 groups agree"]
+    if p.action == "WAIT":
+        out.append(f"⚪ No trade: {escape(p.skip)}")
+        return out
+    if p.skip:
+        out.append(f"⛔ <b>Skip it:</b> {escape(p.skip)}")
+    out += [
+        f"💵 Entry: <code>{_fx_price(p.symbol, p.entry)}</code> (market order now)",
+        f"🛑 Stop-loss: <code>{_fx_price(p.symbol, p.stop)}</code>  ({p.stop_pips:.0f} {unit})",
+        f"🎯 Take-profit: <code>{_fx_price(p.symbol, p.target)}</code>  ({p.target_pips:.0f} {unit})",
+        f"📦 Lot size: <b>{p.lots:.2f}</b> on a {p.account.title()} account",
+        f"⚖️ If stop hits: <b>-${p.risk_usd:.2f}</b> ({p.risk_pct:.1f}% of ${p.balance:g})  ·  "
+        f"if target hits: <b>+${p.reward_usd:.2f}</b>",
+        f"🏦 Margin used: about ${p.margin_usd:.2f} at 1:{p.leverage}",
+    ]
+    if p.samples >= 10:
+        mark = "✅" if p.hit_rate >= p.breakeven else "⛔"
+        out.append(f"📈 History: {mark} similar signals reached the target first <b>{p.hit_rate:.0%}</b> of "
+                   f"{p.samples} times (range {p.hit_low:.0%}-{p.hit_high:.0%}; needs {p.breakeven:.0%} "
+                   f"to break even at 1:{p.rr:g})")
+    else:
+        out.append("📈 History: not enough similar past signals to judge")
+    if full and p.reasons:
+        out.append("🧠 <b>Why</b>")
+        out += [f"• {escape(r)}" for r in p.reasons[:4]]
+    if full and p.warnings:
+        out += [f"⚠️ {escape(w)}" for w in p.warnings[:3]]
+    if p.time is not None:
+        out.append(f"🕒 Signal at candle close {lt.hhmm(p.time + pd.Timedelta(minutes=MINUTES.get(p.interval, 15)))} "
+                   f"{lt.label()}. Valid for about {2 * MINUTES.get(p.interval, 15)} min; skip if price already moved "
+                   "halfway to the target.")
+    return out
+
+
+def fx_message(p) -> str:
+    return "\n".join(["💱 <b>Forex signal (MT5)</b>", LINE, *_fx_card(p), LINE, FX_DISCLAIMER])
+
+
+def fx_scan_message(good, plans, errors, interval: str) -> str:
+    lines = [f"💱 <b>Forex picks</b> · {interval} · checked {len(plans) + len(errors)} assets", LINE]
+    if good:
+        for i, p in enumerate(good, 1):
+            lines += [f"<b>#{i}</b>", *_fx_card(p, full=False), ""]
+    else:
+        lines.append("😴 No safe forex trade right now. Waiting is a position too.")
+        lines.append("")
+    rest = [p for p in plans if p not in good]
+    if rest:
+        lines.append("<b>Others</b>")
+        for p in rest:
+            why = p.skip or "no clear direction"
+            lines.append(f"• {escape(p.broker_symbol)}: {p.action if p.action != 'WAIT' else 'WAIT'} · {escape(why)}")
+    if errors:
+        lines.append("Couldn't load: " + ", ".join(errors))
+    lines += ["", "Send <code>/fx EURUSD</code> for the full reason of one pair.", LINE, FX_DISCLAIMER]
+    return "\n".join(lines)

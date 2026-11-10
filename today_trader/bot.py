@@ -21,7 +21,7 @@ INTERVALS = {"1m", "2m", "5m", "15m", "30m", "1h"}
 class QuobotChat:
     def __init__(self, symbols, interval, threshold=DEFAULT_THRESHOLD, min_agree=2,
                  history=10000, demo=False, disclaimer="", study_fn=None,
-                 picks_every=5, picks_from=None, top=3, send_empty=True, min_winrate=0.0):
+                 picks_every=5, picks_from=None, top=3, send_empty=True, min_winrate=0.0, fx_every=0):
         self.symbols, self.interval = list(symbols), interval
         self.threshold, self.min_agree = threshold, min_agree
         self.history, self.demo, self.disclaimer = history, demo, disclaimer
@@ -30,6 +30,7 @@ class QuobotChat:
         self.picks_from = list(picks_from) if picks_from else list(symbols)
         self.pending: list = []
         self.min_winrate = min_winrate
+        self.fx_every, self.fx_sent = fx_every, set()
 
     # ---- replies --------------------------------------------------------
     def read_text(self, symbol: str, interval: str | None = None) -> str:
@@ -77,6 +78,8 @@ class QuobotChat:
                 df = data.fetch(sym, iv, self.history, demo=self.demo)
                 return study_message(study(df, sym, iv, data.is_crypto(sym)))
             return study_message(self.study_fn(sym, iv, self.demo))
+        if cmd == "/fx":
+            return self.fx_text(parts[1:])
         if cmd == "/watchlist":
             return ("👀 <b>Watchlist</b> · " + self.interval + f" · {len(self.symbols)} assets\n"
                     + ", ".join(self.symbols) + "\n\nI send an alert when any of these gives a signal.")
@@ -94,7 +97,31 @@ class QuobotChat:
             return (f"🤔 Couldn't analyse <b>{symbol}</b> ({type(e).__name__}).\n"
                     "Check the name, e.g. <code>EURUSD</code>, <code>XAUUSD</code>, <code>BTCUSDT</code>. Send /help for commands.")
 
-    # ---- main loop ------------------------------------------------------
+    def fx_text(self, args) -> str:
+        from . import forex
+        from .tg_format import fx_message, fx_scan_message
+        iv = next((a.lower() for a in args if a.lower() in INTERVALS), "15m")
+        syms = [assets.normalize(a) for a in args if a.lower() not in INTERVALS]
+        cfg = forex.settings_from_env()
+        if len(syms) == 1:
+            if not forex.supported(syms[0]):
+                return (f"💱 Forex mode covers forex pairs, gold (XAUUSD) and silver (XAGUSD). "
+                        f"<b>{syms[0]}</b> isn't one of them.")
+            return fx_message(forex.plan_trade(syms[0], iv, demo=self.demo, **cfg))
+        good, plans, errors = forex.scan(syms or None, iv, self.demo, **cfg)
+        return fx_scan_message(good, plans, errors, iv)
+
+    def fx_job(self) -> None:
+        """Automatic forex picks: only sends when there is a valid trade."""
+        from . import forex
+        from .tg_format import fx_scan_message
+        good, plans, errors = forex.scan(None, "15m", self.demo, **forex.settings_from_env())
+        fresh = [p for p in good if (p.symbol, p.time) not in self.fx_sent]
+        print(f"[fx] {len(good)} valid, {len(fresh)} new")
+        if fresh:
+            self.fx_sent |= {(p.symbol, p.time) for p in fresh}
+            telegram.send(fx_scan_message(fresh, [], {}, "15m"), html=True)
+
     # ---- automatic picks -------------------------------------------------
     def picks_job(self, send=True) -> str:
         from .picks import find_picks, log_pick
@@ -149,6 +176,8 @@ class QuobotChat:
                          f"top {self.top} safe trades, then the result of each one.")
         if alert_fn:
             lines.append(f"🔔 Alerts on for: {', '.join(self.symbols)}")
+        if self.fx_every:
+            lines.append(f"💱 Every {self.fx_every} min I also look for forex trades (MT5) with stop-loss and take-profit.")
         lines.append("Send /help to see what I can do.")
         telegram.send("\n".join(lines), html=True)
         print("Bot running. Ctrl+C to stop.")
@@ -158,6 +187,8 @@ class QuobotChat:
             jobs.append([step_seconds, 0.0, alert_fn])
         if self.picks_every:
             jobs.append([self.picks_every * 60, 0.0, self.picks_job])
+        if self.fx_every:
+            jobs.append([self.fx_every * 60, 0.0, self.fx_job])
         jobs.append([15, 0.0, self.results_job])
         while True:
             now = time.time()
