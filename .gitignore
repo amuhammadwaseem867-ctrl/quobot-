@@ -3,3 +3,4 @@ __pycache__/
 .venv/
 .env
 quobot_settings.json
+quobot_picks.csv

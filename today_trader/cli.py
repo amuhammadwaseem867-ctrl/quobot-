@@ -137,7 +137,7 @@ def cmd_watch(args):
 
 
 def cmd_bot(args):
-    todo = [s for s in args.symbols if not study_is_recent(s, args.interval)]
+    todo = [s for s in args.symbols if not study_is_recent(s, args.interval)] if args.alerts else []
     if todo:
         print(f"Learning from history for {len(todo)} asset(s) first (about 10-20 seconds each)...")
         from concurrent.futures import ThreadPoolExecutor
@@ -151,11 +151,19 @@ def cmd_bot(args):
         with ThreadPoolExecutor(max_workers=4) as ex:
             for sym, verdict in ex.map(learn, todo):
                 print(f"  {sym}: {verdict}")
-    else:
-        print("Using what I learned in the last 12 hours (delete quobot_settings.json to re-learn).")
+    picks_from = assets.expand(args.picks_from) if args.picks_from else args.symbols
     chat = QuobotChat(args.symbols, args.interval, args.threshold, args.min_agree, HISTORY, args.demo, DISCLAIMER,
-                      study_fn=run_study)
-    chat.run(INTERVAL_SECONDS.get(args.interval, 60), make_alerter(args))
+                      study_fn=run_study, picks_every=args.picks_every, picks_from=picks_from, top=args.top,
+                      send_empty=not args.quiet)
+    chat.run(INTERVAL_SECONDS.get(args.interval, 60), make_alerter(args) if args.alerts else None)
+
+
+def cmd_picks(args):
+    from .picks import find_picks
+    from .tg_format import picks_message
+    found, stats = find_picks(args.symbols, args.interval, args.top, args.threshold, args.demo, HISTORY,
+                              study_fn=run_study)
+    print(plain(picks_message(found, stats, args.interval)))
 
 
 def cmd_backtest(args):
@@ -258,7 +266,18 @@ def main(argv=None):
     common(bt)
     bt.add_argument("-v", "--verbose", action="store_true")
     bt.add_argument("--min-agree", type=int, default=2, help="only alert when this many of 4 groups agree (default 2)")
+    bt.add_argument("--picks-every", type=int, default=5, help="send safe picks every N minutes (0 = off, default 5)")
+    bt.add_argument("--picks-from", nargs="*", default=None,
+                    help="assets/groups to pick from (default: the same as the watchlist), e.g. all")
+    bt.add_argument("--top", type=int, default=3, help="how many picks per round (default 3)")
+    bt.add_argument("--alerts", action="store_true", help="also alert on every new watchlist signal")
+    bt.add_argument("--quiet", action="store_true", help="don't send a message when there are no safe picks")
     bt.set_defaults(func=cmd_bot)
+
+    pk = sub.add_parser("picks", help="find the safest trades right now (one round)")
+    common(pk)
+    pk.add_argument("--top", type=int, default=3)
+    pk.set_defaults(func=cmd_picks)
 
     b = sub.add_parser("backtest", help="measure how past signals would have done")
     common(b)

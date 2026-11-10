@@ -169,3 +169,18 @@ def test_assets_catalog():
     assert len(allx) == len(set(allx)) > 80
     assert assets.expand(["forex", "gold", "EURUSD"])[-1] == "XAUUSD"
     assert data.yahoo_ticker("GER40") == "^GDAXI" and data.is_crypto("TONUSDT")
+
+
+def test_picks_flow(tmp_path, monkeypatch):
+    from today_trader import picks
+    from today_trader.tg_format import picks_message, result_message, results_message
+    monkeypatch.chdir(tmp_path)
+    found, stats = picks.find_picks(["EURUSD", "GBPUSD", "XAUUSD"], "5m", 3, demo=True)
+    assert stats["scanned"] == 3
+    assert "Safe picks" in picks_message(found, stats, "5m")
+    p = picks.Pick("EURUSD", "CALL", "5m", 1, "2026-11-10T15:05:00+00:00", "2026-11-10T15:10:00+00:00",
+                   1.0, float("nan"), 50, 50, 3, "x")
+    p.result, p.exit_price = "WIN", 1.1
+    picks.log_pick(p, tmp_path / "log.csv")
+    assert "WIN" in result_message(p, {"wins": 1, "losses": 0, "draws": 0})
+    assert "Today" in results_message(picks.today_results(tmp_path / "log.csv"))

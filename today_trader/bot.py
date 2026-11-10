@@ -6,6 +6,8 @@ from __future__ import annotations
 import sys
 import time
 
+import pandas as pd
+
 from . import assets, data, risk, telegram
 from .engine import analyze_many, mark_closed
 from .market_read import read_market
@@ -18,11 +20,15 @@ INTERVALS = {"1m", "2m", "5m", "15m", "30m", "1h"}
 
 class QuobotChat:
     def __init__(self, symbols, interval, threshold=DEFAULT_THRESHOLD, min_agree=2,
-                 history=10000, demo=False, disclaimer="", study_fn=None):
+                 history=10000, demo=False, disclaimer="", study_fn=None,
+                 picks_every=5, picks_from=None, top=3, send_empty=True):
         self.symbols, self.interval = list(symbols), interval
         self.threshold, self.min_agree = threshold, min_agree
         self.history, self.demo, self.disclaimer = history, demo, disclaimer
         self.study_fn = study_fn
+        self.picks_every, self.top, self.send_empty = picks_every, top, send_empty
+        self.picks_from = list(picks_from) if picks_from else list(symbols)
+        self.pending: list = []
 
     # ---- replies --------------------------------------------------------
     def read_text(self, symbol: str, interval: str | None = None) -> str:
@@ -50,6 +56,12 @@ class QuobotChat:
             return HELP_MESSAGE
         if cmd == "/scan":
             return self.scan_text(parts[1] if len(parts) > 1 else None)
+        if cmd == "/picks":
+            return self.picks_job(send=False)
+        if cmd == "/results":
+            from .picks import today_results
+            from .tg_format import results_message
+            return results_message(today_results())
         if cmd == "/assets":
             return assets_message()
         if cmd == "/sessions":
@@ -82,7 +94,43 @@ class QuobotChat:
                     "Check the name, e.g. <code>EURUSD</code>, <code>XAUUSD</code>, <code>BTCUSDT</code>. Send /help for commands.")
 
     # ---- main loop ------------------------------------------------------
-    def run(self, step_seconds: int, alert_fn) -> None:
+    # ---- automatic picks -------------------------------------------------
+    def picks_job(self, send=True) -> str:
+        from .picks import find_picks, log_pick
+        from .tg_format import picks_message
+        found, stats = find_picks(self.picks_from, self.interval, self.top, self.threshold,
+                                  self.demo, self.history, study_fn=self.study_fn)
+        for p, _ in found:
+            if not any(q.symbol == p.symbol and q.end_time == p.end_time for q in self.pending):
+                self.pending.append(p)
+        nxt = None
+        if self.picks_every:
+            now = pd.Timestamp.now(tz="UTC")
+            nxt = now.floor(f"{self.picks_every}min") + pd.Timedelta(minutes=self.picks_every)
+        text = picks_message(found, stats, self.interval, nxt)
+        if send and (found or self.send_empty):
+            telegram.send(text, html=True)
+        print(f"[picks] {len(found)} pick(s), {stats}")
+        return text
+
+    def results_job(self) -> None:
+        from .picks import check_result, log_pick, today_results
+        from .tg_format import result_message
+        still = []
+        for p in self.pending:
+            try:
+                done = check_result(p, self.demo)
+            except Exception:
+                done = None
+            if done is None:
+                still.append(p)
+                continue
+            log_pick(done)
+            telegram.send(result_message(done, today_results()), html=True)
+        self.pending = still
+
+    # ---- main loop ------------------------------------------------------
+    def run(self, step_seconds: int, alert_fn=None) -> None:
         token, chat = telegram.credentials()
         if not (token and chat):
             sys.exit("Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env first.")
@@ -94,16 +142,32 @@ class QuobotChat:
                 offset = old[-1]["update_id"] + 1
         except RuntimeError as e:
             sys.exit(f"{e}\n{telegram.UNREACHABLE_HINT}")
-        telegram.send("🤖 <b>Quobot is online</b>\nWatching " + ", ".join(self.symbols) + f" on {self.interval}.\n"
-                      "I'll message you when a new signal appears. Send /help to see what I can do.", html=True)
-        print("Bot running: answering Telegram messages and sending alerts. Ctrl+C to stop.")
-        next_alert = 0.0
+        lines = ["🤖 <b>Quobot is online</b>"]
+        if self.picks_every:
+            lines.append(f"🎯 Every {self.picks_every} min I check {len(self.picks_from)} assets and send the "
+                         f"top {self.top} safe trades, then the result of each one.")
+        if alert_fn:
+            lines.append(f"🔔 Alerts on for: {', '.join(self.symbols)}")
+        lines.append("Send /help to see what I can do.")
+        telegram.send("\n".join(lines), html=True)
+        print("Bot running. Ctrl+C to stop.")
+
+        jobs = []  # [period_seconds, next_run, fn]
+        if alert_fn:
+            jobs.append([step_seconds, 0.0, alert_fn])
+        if self.picks_every:
+            jobs.append([self.picks_every * 60, 0.0, self.picks_job])
+        jobs.append([15, 0.0, self.results_job])
         while True:
             now = time.time()
-            if now >= next_alert:
-                alert_fn()
-                next_alert = now - (now % step_seconds) + step_seconds + 3
-            wait = int(min(25, max(1, next_alert - time.time())))
+            for job in jobs:
+                if now >= job[1]:
+                    try:
+                        job[2]()
+                    except Exception as e:  # a failed round must not stop the bot
+                        print(f"job error: {type(e).__name__}: {e}", file=sys.stderr)
+                    job[1] = now - (now % job[0]) + job[0] + 3
+            wait = int(min(25, max(1, min(j[1] for j in jobs) - time.time())))
             try:
                 updates = telegram.get_updates(token, offset, wait)
             except RuntimeError as e:

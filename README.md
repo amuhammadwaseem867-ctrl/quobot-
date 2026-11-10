@@ -108,7 +108,34 @@ or get rate-limited by Yahoo. Watch the groups you actually trade, and use `/sca
 You get a message whenever an asset's bias changes to CALL or PUT. The bot only sends alerts while
 `watch` is running, so leave that window open (or run it on an always-on PC or server).
 
-### Two-way Telegram bot (recommended)
+### Automatic safe picks (start-bot.bat)
+
+```bash
+python -m today_trader bot -i 1m --picks-from all --picks-every 5 --top 3
+```
+
+Every 5 minutes the bot scans every asset and sends you only the trades that pass **all** safety
+checks, ranked by a safety score (0-100). Each pick says:
+
+- the **asset** and **CALL ⬆️ / PUT ⬇️**
+- the **candle** timeframe and the **expiry** to set
+- the **entry time** and **end time** in Pakistan time
+- the current price, the "wrong if" level, agreement and track record, and the top reasons
+
+A pick must have 3+ of 4 groups agreeing, a normal market (not against the bigger trend, not
+too quiet or spiking, good session, market open), a track record above break-even, past studies
+that held up on unseen data, and similar past moments leaning the same way. Most rounds have
+0-1 picks; "No safe trades right now" is a normal answer.
+
+After each pick's expiry, the bot checks the closing price and sends **✅ WIN / ❌ LOSS** with
+today's score. Every pick is saved in `quobot_picks.csv` as your journal. `/picks` runs a round
+now and `/results` shows today's wins and losses. Results use public prices, which can differ a
+little from Quotex's.
+
+Options: `--picks-every 10` (minutes, 0 = off), `--top 5`, `--quiet` (no message when there are
+no picks), `--alerts` (also alert on every watchlist signal, the old behaviour).
+
+### Two-way Telegram bot
 
 ```bash
 python -m today_trader bot EURUSD GBPUSD XAUUSD BTCUSDT -i 1m
@@ -127,6 +154,8 @@ The bot then does two things on its own:
 |---|---|
 | `EURUSD` | market read for that asset (any asset name) |
 | `EURUSD 5m` | same, on another timeframe |
+| `/picks` | the safest trades right now |
+| `/results` | today's wins and losses of the picks |
 | `/scan` | signal for every asset on the watchlist |
 | `/risk 100` | stake size and daily stop for a balance of 100 |
 | `/study EURUSD` | replay ~10,000 past candles and learn the best settings for that asset |

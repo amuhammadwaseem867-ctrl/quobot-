@@ -238,6 +238,8 @@ HELP_MESSAGE = "\n".join([
     "• <code>EURUSD</code>, <code>gold</code>, <code>apple</code>, <code>BTC</code> → full market read with prediction and reasons",
     "• <code>EURUSD 5m</code> → same, on 5-minute candles",
     "• /scan → quick signal for every asset I watch",
+    "• /picks → the safest trades right now (also sent automatically every 5 min)",
+    "• /results → today's wins and losses of my picks",
     "• /study EURUSD → replay up to 10,000 past candles, learn the best settings, check them on unseen data",
     "• /risk 100 → stake size and daily stop for a balance of 100",
     "• /scan forex (or crypto, stocks, indices, commodities, all) → scan a group",
@@ -246,7 +248,8 @@ HELP_MESSAGE = "\n".join([
     "• /sessions → market session times in your time zone",
     "",
     "<b>On my own</b>",
-    "🔔 I message you when a new CALL or PUT appears on your watchlist.",
+    "🎯 Every 5 minutes I send the safest trades: asset, CALL/PUT, candle, expiry and entry time.",
+    "✅ After each trade ends I tell you if it won or lost, with today's score.",
     "",
     "<b>How to read a signal</b>",
     "🟢 CALL = price expected up · 🔴 PUT = down · ⚪ WAIT = no edge",
@@ -310,4 +313,67 @@ def study_message(r) -> str:
             out.append(f"• Best hours ({lt.label()}): {_loc(best_h[0])} ({best_h[1][0]:.0%}) · "
                        f"worst: {_loc(worst_h[0])} ({worst_h[1][0]:.0%})")
     out += ["", "<i>Past results don't guarantee future ones. The 'unseen data' line is the honest one.</i>"]
+    return "\n".join(out)
+
+
+def picks_message(picks, stats: dict, interval: str, next_check: pd.Timestamp | None = None) -> str:
+    now = pd.Timestamp.now(tz="UTC")
+    out = [f"🎯 <b>Safe picks</b> · {lt.hhmm(now)} ({lt.label()})", LINE]
+    if not picks:
+        out.append(f"😴 <b>No safe trades right now.</b>")
+        out.append(f"Checked {stats.get('scanned', 0)} assets: {stats.get('signals', 0)} had a signal, "
+                   f"{stats.get('rejected', 0)} failed a safety check.")
+        out.append("Not trading is the safe choice when nothing passes.")
+    for i, (p, m) in enumerate(picks, 1):
+        icon, word = ("🟢", "CALL ⬆️ UP") if p.direction == "CALL" else ("🔴", "PUT ⬇️ DOWN")
+        entry, end = pd.Timestamp(p.entry_time), pd.Timestamp(p.end_time)
+        mins = MINUTES.get(p.interval, 1) * p.expiry
+        hit = f"{m.hit_rate:.0%} of {m.samples}" if m.samples >= 20 else "not enough cases yet"
+        out += ["",
+                f"<b>{i}. {icon} {escape(p.symbol)} — {word}</b>",
+                f"🛡 Safety: {strength_bar(p.safety)} <b>{p.safety:.0f}</b>/100",
+                f"🕯 Candle: <b>{p.interval}</b> · ⏱ Expiry: <b>{mins} min</b>",
+                f"🕐 Enter at <b>{lt.hhmm(entry)}</b> · ends <b>{lt.hhmm(end)}</b>",
+                f"💰 Price now <code>{_p(p.entry_price)}</code>"
+                + ("" if math.isnan(p.stop) else
+                   f" · wrong if {'below' if p.direction == 'CALL' else 'above'} <code>{_p(p.stop)}</code>"),
+                f"🤝 {p.confluence}/4 groups agree · 📈 track record {hit}",
+                f"💡 {escape(p.reasons)}"]
+    if next_check is not None:
+        out += ["", f"⏭ Next check at {lt.hhmm(next_check)}. I'll send the result of each pick after it ends."]
+    out += ["", "<i>Send the asset name (e.g. EURUSD) for the full explanation.</i>", DISCLAIMER_SHORT]
+    return "\n".join(out)
+
+
+def result_message(p, tally: dict) -> str:
+    if p.result == "UNKNOWN":
+        return (f"❔ <b>Result: {escape(p.symbol)} {p.direction}</b>\n"
+                "The price feed didn't publish the closing candle in time, so I can't tell. Check it on Quotex.")
+    icon = {"WIN": "✅", "LOSS": "❌", "DRAW": "➖"}.get(p.result, "❔")
+    arrow = "⬆️" if p.direction == "CALL" else "⬇️"
+    done = tally["wins"] + tally["losses"]
+    rate = f"{tally['wins'] / done:.0%}" if done else "-"
+    return "\n".join([
+        f"{icon} <b>Result: {escape(p.symbol)} {p.direction} {arrow} — {p.result}</b>",
+        f"Entry <code>{_p(p.entry_price)}</code> → close <code>{_p(p.exit_price)}</code> "
+        f"({MINUTES.get(p.interval, 1) * p.expiry} min, ended {lt.hhmm(pd.Timestamp(p.end_time))})",
+        f"📊 Today: <b>{tally['wins']}W / {tally['losses']}L</b>" + (f" / {tally['draws']}D" if tally["draws"] else "")
+        + f" · win rate {rate}",
+        "<i>Results use public price feeds; Quotex's own price can differ slightly.</i>",
+    ])
+
+
+def results_message(tally: dict) -> str:
+    done = tally["wins"] + tally["losses"]
+    out = [f"📊 <b>Today's picks</b> ({lt.label()})", LINE,
+           f"✅ {tally['wins']} wins · ❌ {tally['losses']} losses" + (f" · ➖ {tally['draws']} draws" if tally["draws"] else ""),
+           f"Win rate: <b>{tally['wins'] / done:.0%}</b> (need 54% to break even)" if done else "No finished picks yet today."]
+    rows = [r for r in tally["rows"] if isinstance(r.get("result"), str) and r["result"]]
+    if rows:
+        out += ["", "<b>Last picks</b>"]
+        for r in rows[-10:]:
+            icon = {"WIN": "✅", "LOSS": "❌", "DRAW": "➖"}.get(r["result"], "❔")
+            out.append(f"{icon} {lt.hhmm(pd.Timestamp(r['entry_time']))} {escape(str(r['symbol']))} {r['direction']}")
+    if done >= 10 and tally["wins"] / done < 0.54:
+        out += ["", "⚠️ Below break-even today. Consider stopping for the day."]
     return "\n".join(out)
