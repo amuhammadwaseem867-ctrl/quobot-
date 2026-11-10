@@ -93,3 +93,12 @@ def test_risk_plan():
     from today_trader.risk import RiskPlan
     p = RiskPlan(200, risk_pct=1)
     assert p.stake == 2 and p.martingale_cost(5) == 62
+
+
+def test_market_read_runs_and_explains():
+    from today_trader.market_read import format_read, read_market
+    df = data.demo_candles(n=800, seed=11)
+    m = read_market(df, "EURUSD", "5m")
+    text = format_read(m)
+    assert "Prediction:" in text and "What the market is doing" in text
+    assert m.prediction.split()[0] in ("UP", "DOWN", "NO")

@@ -15,6 +15,7 @@ import time
 from datetime import datetime, timezone
 
 from . import data, risk, telegram
+from .market_read import format_read, read_market
 from .backtest import backtest
 from .signals import DEFAULT_THRESHOLD, analyze
 
@@ -110,12 +111,13 @@ def cmd_watch(args):
         results = run_scan(args.symbols, args.interval, args.threshold, args.demo, args.verbose, args.min_agree)
         for s in results:
             if s.direction != "WAIT" and last_alert.get(s.symbol) != s.direction:
-                top = "\n".join(f"- {r}" for r in s.reasons[:6])
-                warn = "".join(f"\n! {w}" for w in s.warnings)
-                telegram.send(
-                    f"{s.symbol} {s.interval}: {s.direction}\nScore {s.score:+.0f}, {s.confluence}/4 groups agree, "
-                    f"{s.regime}, price {fmt_price(s.price)}\n{top}{warn}\n\n{DISCLAIMER}"
-                )
+                try:
+                    df = data.fetch(s.symbol, s.interval, 1000, demo=args.demo)
+                    m = read_market(df, s.symbol, s.interval, data.is_crypto(s.symbol), 1, args.threshold)
+                    text = format_read(m)
+                except Exception:
+                    text = f"{s.symbol} {s.interval}: {s.direction}, score {s.score:+.0f}"
+                telegram.send(f"{text}\n\n{DISCLAIMER}")
             last_alert[s.symbol] = s.direction
         # sleep until a few seconds after the next candle closes
         wait = step - (time.time() % step) + 3
@@ -143,6 +145,17 @@ def cmd_backtest(args):
     print(f"Break-even win rate at {args.payout:.0%} payout: {be:.1%}. Below that, the signals lost money.")
     print("'No filters' ignores the higher-timeframe, volatility and session filters, for comparison.")
     print(DISCLAIMER + "\n")
+
+
+def cmd_read(args):
+    for sym in args.symbols:
+        try:
+            df = data.fetch(sym, args.interval, 1000, demo=args.demo)
+            m = read_market(df, sym, args.interval, data.is_crypto(sym), args.expiry, args.threshold)
+            print("\n" + "=" * 78 + "\n" + format_read(m, args.payout))
+        except Exception as e:
+            print(f"{sym}: error: {e}", file=sys.stderr)
+    print("=" * 78 + "\n" + DISCLAIMER + "\n")
 
 
 def cmd_risk(args):
@@ -181,6 +194,12 @@ def main(argv=None):
     b.add_argument("--expiry", type=int, default=1, help="expiry in candles (1 = one candle ahead)")
     b.add_argument("--payout", type=float, default=0.85, help="broker payout, e.g. 0.85 for 85%%")
     b.set_defaults(func=cmd_backtest)
+
+    rd = sub.add_parser("read", help="plain-language market read: prediction, reasons, invalidation, track record")
+    common(rd)
+    rd.add_argument("--expiry", type=int, default=1, help="prediction horizon in candles (default 1)")
+    rd.add_argument("--payout", type=float, default=0.85)
+    rd.set_defaults(func=cmd_read)
 
     r = sub.add_parser("risk", help="stake size and daily stop for your balance")
     r.add_argument("balance", type=float, help="your account balance")

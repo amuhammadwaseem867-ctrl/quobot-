@@ -51,6 +51,9 @@ python -m today_trader scan --min-agree 3
 # Check how the signals would have done on recent history
 python -m today_trader backtest EURUSD GBPUSD -i 1m --expiry 1 --payout 0.85
 
+# Plain-language market read: prediction, reasons, what would prove it wrong, track record
+python -m today_trader read EURUSD XAUUSD -i 1m --expiry 1
+
 # Stake size and daily stop for your balance
 python -m today_trader risk 100
 
@@ -119,6 +122,24 @@ shows **WAIT**. Change the cut-off with `-t`, e.g. `-t 60` for fewer, stronger s
 The bot never uses information it couldn't have had at the time. Swing points only count once
 they're confirmed, the unfinished current candle is ignored, and the tests check this
 (look-ahead bias is the usual reason trading bots look great in backtests and then lose live).
+
+## Market read
+
+`read` explains the market in plain words for each asset:
+
+- **What the market is doing:** trend, trend strength, the higher-timeframe trend, momentum,
+  nearest support and resistance, the last candle pattern, and volatility.
+- **Prediction:** UP, DOWN or NO CLEAR EDGE for the next `--expiry` candles.
+- **Why / Against it:** every indicator that supports the call, and every one that disagrees.
+- **Wrong if:** the price level that cancels the idea (nearest support for UP, resistance for DOWN).
+- **Typical move:** how far price usually moves in that time (from ATR).
+- **Track record:** how often strong signals in the same direction were right on this asset's
+  recent history, compared with the win rate you need to break even, for 1, 2, 3 and 5 candles.
+
+Telegram alerts from `watch` send this same read.
+
+The "prediction" is a lean based on indicators, not a forecast anyone can guarantee. Trust the
+track-record line more than the prediction: if it says BELOW break-even, skip that asset.
 
 ## Risk management
 
