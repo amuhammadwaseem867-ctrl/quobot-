@@ -255,7 +255,8 @@ def study_message(r) -> str:
     if not r.best:
         return "\n".join(out + ["", escape(r.verdict)])
     b, tr, te = r.best, r.train, r.test
-    icon = "✅" if r.recommended and r.test_low > 0.5 else "🟡" if r.recommended else "⛔"
+    icon = ("➖" if te["trades"] < 20 else "✅" if r.recommended and r.test_low > 0.5
+            else "🟡" if r.recommended else "⛔")
     out += ["", "<b>🏆 Best settings (learned on older 70%)</b>",
             f"Strength ≥{b['threshold']:.0f} · {b['min_agree']}/4 agree · expiry {b['expiry']} candle(s)",
             f"Older data: {tr['win_rate']:.0%} over {tr['trades']} trades",
