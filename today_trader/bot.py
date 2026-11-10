@@ -31,6 +31,7 @@ class QuobotChat:
         self.pending: list = []
         self.min_winrate = min_winrate
         self.fx_every, self.fx_sent = fx_every, set()
+        self.err_sent: dict = {}
 
     # ---- replies --------------------------------------------------------
     def read_text(self, symbol: str, interval: str | None = None) -> str:
@@ -178,6 +179,7 @@ class QuobotChat:
             lines.append(f"🔔 Alerts on for: {', '.join(self.symbols)}")
         if self.fx_every:
             lines.append(f"💱 Every {self.fx_every} min I also look for forex trades (MT5) with stop-loss and take-profit.")
+        lines.append("⏳ First scan is starting now; the first picks can take 2-5 minutes.")
         lines.append("Send /help to see what I can do.")
         telegram.send("\n".join(lines), html=True)
         print("Bot running. Ctrl+C to stop.")
@@ -197,7 +199,13 @@ class QuobotChat:
                     try:
                         job[2]()
                     except Exception as e:  # a failed round must not stop the bot
-                        print(f"job error: {type(e).__name__}: {e}", file=sys.stderr)
+                        name = getattr(job[2], "__name__", "job")
+                        print(f"job error ({name}): {type(e).__name__}: {e}", file=sys.stderr)
+                        if now - self.err_sent.get(name, 0) > 1800:  # tell you, at most every 30 min
+                            self.err_sent[name] = now
+                            telegram.send(f"⚠️ <b>{name} failed</b>: {type(e).__name__}: "
+                                          f"{str(e)[:200].replace('<', '(').replace('>', ')')}\n"
+                                          "I'll keep trying. Send this message to your developer.", html=True)
                     job[1] = now - (now % job[0]) + job[0] + 3
             wait = int(min(25, max(1, min(j[1] for j in jobs) - time.time())))
             try:
