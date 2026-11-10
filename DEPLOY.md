@@ -3,11 +3,29 @@
 PC band ho tab bhi bot chalta rahe, is ke liye usay ek **cloud server (VPS)** par chalayein.
 Server Pakistan se bahar hota hai, is liye wahan **VPN ki zaroorat nahi**. Telegram seedha chalta hai.
 
+## Bilkul muft option: purana Android phone (Termux)
+
+Koi card nahi, koi server nahi. Ek purana Android phone 24/7 charging par laga dein:
+
+1. Phone par **Termux** install karein **F-Droid** se (https://f-droid.org/packages/com.termux/). Play Store wala purana version kaam nahi karta.
+2. Termux kholein aur ye command chalayein:
+   ```
+   curl -fsSL https://raw.githubusercontent.com/amuhammadwaseem867-ctrl/quobot-/main/deploy/termux-setup.sh | bash
+   ```
+   Ye aapka token aur chat id poochega.
+3. Bot chalayein: `~/start-quobot.sh`
+4. Phone ko **charging** par rakhein, **Wi-Fi** on rakhein, aur phone par **VPN** on rakhein (Pakistan mein Telegram API block ho sakti hai).
+5. Phone ki settings mein Termux ke liye **battery optimization off** kar dein, taa ke Android usay band na kare.
+
+PC wala bot band kar dein: ek token par do bot nahi chal sakte.
+
+## Cloud server (PC aur phone dono band ho tab bhi)
+
 ## 1. Server lein (ek option chunein)
 
 | Option | Qeemat | Note |
 |---|---|---|
-| **Oracle Cloud "Always Free"** | Muft | Card se verification hoti hai (charge nahi hota). Signup kabhi kabhi mushkil hota hai. |
+| **Oracle Cloud "Always Free"** | Muft | Card chahiye sirf verification ke liye (~$1 temporary hold, wapas ho jata hai). SadaPay / NayaPay / bank ka international Visa/Mastercard aksar chal jata hai. Signup kabhi kabhi reject hota hai. |
 | **Hetzner CX22** | ~€4 / mahina | Sasta aur reliable. |
 | **DigitalOcean / Vultr** | ~$5-6 / mahina | Asaan dashboard. |
 
