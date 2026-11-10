@@ -42,11 +42,17 @@ python -m today_trader scan EURUSD GBPJPY XAUUSD BTCUSDT -i 1m
 # Show the reasons for every asset, not just the ones with a bias
 python -m today_trader scan -v
 
-# Re-scan every time a candle closes
+# Re-scan every time a candle closes (alerts when 2+ of 4 groups agree)
 python -m today_trader watch EURUSD GBPUSD -i 1m
+
+# Only show signals where 3 of 4 groups agree
+python -m today_trader scan --min-agree 3
 
 # Check how the signals would have done on recent history
 python -m today_trader backtest EURUSD GBPUSD -i 1m --expiry 1 --payout 0.85
+
+# Stake size and daily stop for your balance
+python -m today_trader risk 100
 
 # Try it offline with synthetic data
 python -m today_trader scan --demo
@@ -79,21 +85,66 @@ You get a message whenever an asset's bias changes to CALL or PUT. The bot only 
 
 ## How the score works
 
-Each candle gets a score from -100 (strongly down) to +100 (strongly up). Indicators vote:
+The bot follows a day trader's checklist. Each candle gets a score from -100 (strongly down) to
++100 (strongly up).
 
-| Group | Indicators | Counts more when |
+**1. Four groups of votes**
+
+| Group | What it checks | Counts more when |
 |---|---|---|
-| Trend | EMA 9/21 cross, price vs EMA 50, +DI/-DI | ADX > 25 (trending) |
+| Trend | EMA 9/21, price vs EMA 50, +DI/-DI, Supertrend, Heikin Ashi | ADX > 25 (trending) |
 | Momentum | MACD histogram and its slope | always |
-| Reversal | RSI 30/70, Bollinger bands, Stochastic 20/80 | ADX < 25 (ranging) |
+| Reversal | RSI 30/70, Bollinger bands, Stochastic 20/80, CCI +-100, Williams %R | ADX < 25 (ranging) |
+| Price action | Candlestick patterns, support/resistance bounce or breakout, RSI divergence | always |
+
+Candlestick patterns: engulfing, pin bar (hammer / shooting star), doji, morning / evening star,
+three white soldiers / black crows, piercing line / dark cloud cover, inside-bar breakout.
+
+Support and resistance come from clusters of recent swing highs and lows. The scan prints the two
+nearest levels on each side and how many times price touched them.
+
+**2. Filters** lower the score when conditions are poor:
+
+- **Higher timeframe:** the score is halved if the trend on a 5x higher timeframe (1m -> 5m) disagrees.
+- **Volatility:** reduced when the market is very quiet or spiking (often news).
+- **Session:** full weight in the London / New York overlap, reduced in Asian and late hours,
+  zero for forex at weekends (Quotex only offers OTC then).
+
+**3. Agreement:** "Agree 3/4" means three of the four groups back the bias. `watch` only alerts
+when at least 2 of 4 agree (change with `--min-agree`).
 
 A score of +40 or more shows **CALL (up)**, -40 or less shows **PUT (down)**, anything in between
 shows **WAIT**. Change the cut-off with `-t`, e.g. `-t 60` for fewer, stronger signals.
 
+The bot never uses information it couldn't have had at the time. Swing points only count once
+they're confirmed, the unfinished current candle is ignored, and the tests check this
+(look-ahead bias is the usual reason trading bots look great in backtests and then lose live).
+
+## Risk management
+
+```bash
+python -m today_trader risk 100              # balance of 100
+python -m today_trader risk 500 --risk 2     # 2% per trade
+```
+
+It prints your stake per trade, when to stop for the day, the win rate you need to break even,
+and what a losing streak costs with and without martingale. Day-trader rules built in:
+risk 1-2% per trade, stop after 3 losses in a row or 5% down, never double up after a loss.
+
+## Where the ideas come from
+
+The techniques were chosen by looking at the most-starred open-source trading projects on GitHub,
+such as [freqtrade-strategies](https://github.com/freqtrade/freqtrade-strategies) (most-used
+indicators: EMA, RSI, Bollinger, ADX, MACD, CCI, Supertrend, Heikin Ashi, multi-timeframe and
+hour filters, and its notes on look-ahead bias) and
+[pandas-ta-classic](https://github.com/xgboosted/pandas-ta-classic) (candlestick pattern set).
+All code here was written from scratch; nothing was copied from those projects.
+
 ## Read the backtest before you trust a signal
 
 With an 85% payout you need to win more than about 54% of trades just to break even. The backtest
-prints that break-even line next to the real win rate. Short timeframes (1m) are close to random,
+prints that break-even line, and shows results with and without the filters so you can see
+whether they help on your asset. Short timeframes (1m) are close to random,
 so expect win rates near 50%. If the signals don't beat break-even on an asset and timeframe, don't
 trade them there.
 

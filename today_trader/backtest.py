@@ -36,8 +36,9 @@ class BacktestResult:
 
 
 def backtest(df: pd.DataFrame, symbol: str, expiry: int = 1,
-             threshold: float = DEFAULT_THRESHOLD, payout: float = 0.85) -> BacktestResult:
-    d = score_frame(df).iloc[50:]  # skip indicator warm-up
+             threshold: float = DEFAULT_THRESHOLD, payout: float = 0.85,
+             crypto: bool = False, use_filters: bool = True) -> BacktestResult:
+    d = score_frame(df, crypto=crypto, use_filters=use_filters).iloc[100:]  # skip indicator warm-up
     future = d["close"].shift(-expiry)
     d = d.assign(future=future).dropna(subset=["future"])
     call = d["score"] >= threshold

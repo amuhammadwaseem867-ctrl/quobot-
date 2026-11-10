@@ -82,7 +82,9 @@ def demo_candles(symbol: str = "DEMO", n: int = 300, seed: int | None = None) ->
     close = 1.1 * np.exp(np.cumsum(rets))
     open_ = np.r_[close[0], close[:-1]]
     spread = np.abs(rng.normal(0, 0.0006, n)) * close
-    idx = pd.date_range(end=pd.Timestamp.now(tz="UTC").floor("min"), periods=n, freq="5min")
+    # demo candles are placed on a weekday afternoon (London/NY overlap)
+    end = pd.Timestamp("2026-11-10 15:00", tz="UTC")
+    idx = pd.date_range(end=end, periods=n, freq="5min")
     return pd.DataFrame(
         {
             "open": open_,
@@ -95,9 +97,25 @@ def demo_candles(symbol: str = "DEMO", n: int = 300, seed: int | None = None) ->
     )
 
 
-def fetch(symbol: str, interval: str = "5m", limit: int = 300, demo: bool = False) -> pd.DataFrame:
+INTERVAL_DELTA = {"1m": "1min", "2m": "2min", "5m": "5min", "15m": "15min", "30m": "30min", "1h": "1h", "1d": "1D"}
+
+
+def drop_open_candle(df: pd.DataFrame, interval: str) -> pd.DataFrame:
+    """Remove the last candle if it hasn't closed yet. Analysing a half-formed
+    candle gives signals that change before the candle ends."""
+    if df.empty:
+        return df
+    end = df.index[-1] + pd.Timedelta(INTERVAL_DELTA.get(interval, "1min"))
+    if end > pd.Timestamp.now(tz="UTC"):
+        return df.iloc[:-1]
+    return df
+
+
+def fetch(symbol: str, interval: str = "5m", limit: int = 600, demo: bool = False) -> pd.DataFrame:
     if demo:
         return demo_candles(symbol, limit, seed=zlib.crc32(symbol.encode()))
     if is_crypto(symbol):
-        return fetch_binance(symbol, interval, limit)
-    return fetch_yahoo(symbol, interval, limit)
+        df = fetch_binance(symbol, interval, min(limit + 1, 1000))
+    else:
+        df = fetch_yahoo(symbol, interval, limit + 1)
+    return drop_open_candle(df, interval).tail(limit)

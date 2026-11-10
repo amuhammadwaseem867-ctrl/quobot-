@@ -14,7 +14,7 @@ import sys
 import time
 from datetime import datetime, timezone
 
-from . import data, telegram
+from . import data, risk, telegram
 from .backtest import backtest
 from .signals import DEFAULT_THRESHOLD, analyze
 
@@ -40,27 +40,38 @@ def bar(score: float, width: int = 20) -> str:
     return f"[{left}|{right}]"
 
 
-def run_scan(symbols, interval, threshold, demo, verbose):
+def run_scan(symbols, interval, threshold, demo, verbose, min_confluence=0):
     results = []
     for sym in symbols:
         try:
-            df = data.fetch(sym, interval, 300, demo=demo)
-            results.append(analyze(df, sym, interval, threshold))
+            df = data.fetch(sym, interval, demo=demo)
+            sig = analyze(df, sym, interval, threshold, crypto=data.is_crypto(sym))
+            if sig.direction != "WAIT" and sig.confluence < min_confluence:
+                sig.warnings.append(f"Only {sig.confluence}/4 groups agree (need {min_confluence})")
+                sig.direction = "WAIT"
+            results.append(sig)
         except Exception as e:  # keep going if one feed fails
             print(f"  {sym:<9} error: {e}", file=sys.stderr)
     results.sort(key=lambda s: -abs(s.score))
 
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    print(f"\nToday Trader market scan  |  {interval} candles  |  {now}" + ("  |  DEMO DATA" if demo else ""))
-    print("-" * 78)
-    print(f"{'Asset':<9} {'Price':>12}  {'Score':>6}  {'Bias':<11} {'Regime':<9} {'RSI':>4}  Strength")
+    print(f"\nQuobot market scan  |  {interval} candles  |  {now}" + ("  |  DEMO DATA" if demo else ""))
+    print("-" * 86)
+    print(f"{'Asset':<9} {'Price':>12}  {'Score':>6}  {'Bias':<11} {'Agree':<5} {'Regime':<9} {'RSI':>4}  Strength")
     for s in results:
-        print(f"{s.symbol:<9} {fmt_price(s.price):>12}  {s.score:>+6.0f}  {s.direction:<11} {s.regime:<9} "
-              f"{s.rsi:>4.0f}  {bar(s.score)}")
+        print(f"{s.symbol:<9} {fmt_price(s.price):>12}  {s.score:>+6.0f}  {s.direction:<11} {s.confluence}/4   "
+              f"{s.regime:<9} {s.rsi:>4.0f}  {bar(s.score)}")
         if verbose or s.direction != "WAIT":
             for r in s.reasons:
                 print(f"{'':12}- {r}")
-    print("-" * 78)
+            if s.supports or s.resistances:
+                sup = ", ".join(f"{fmt_price(p)} ({n}x)" for p, n in s.supports) or "none nearby"
+                res = ", ".join(f"{fmt_price(p)} ({n}x)" for p, n in s.resistances) or "none nearby"
+                print(f"{'':12}- Support: {sup} | Resistance: {res}")
+            for w in s.warnings:
+                print(f"{'':12}! {w}")
+    print("-" * 86)
+    print("Agree = how many of the 4 groups (trend, momentum, reversal, price action) back the bias.")
     print(DISCLAIMER + "\n")
     return results
 
@@ -96,12 +107,14 @@ def cmd_watch(args):
     alerts = "Telegram alerts ON" if all(telegram.credentials()) else "Telegram alerts off (no token/chat id)"
     print(f"Watching {', '.join(args.symbols)} on {args.interval}. {alerts}. Ctrl+C to stop.")
     while True:
-        results = run_scan(args.symbols, args.interval, args.threshold, args.demo, args.verbose)
+        results = run_scan(args.symbols, args.interval, args.threshold, args.demo, args.verbose, args.min_agree)
         for s in results:
             if s.direction != "WAIT" and last_alert.get(s.symbol) != s.direction:
+                top = "\n".join(f"- {r}" for r in s.reasons[:6])
+                warn = "".join(f"\n! {w}" for w in s.warnings)
                 telegram.send(
-                    f"{s.symbol} {s.interval}: {s.direction} bias, score {s.score:+.0f} "
-                    f"({s.regime}, RSI {s.rsi:.0f}) at {fmt_price(s.price)}\n\n{DISCLAIMER}"
+                    f"{s.symbol} {s.interval}: {s.direction}\nScore {s.score:+.0f}, {s.confluence}/4 groups agree, "
+                    f"{s.regime}, price {fmt_price(s.price)}\n{top}{warn}\n\n{DISCLAIMER}"
                 )
             last_alert[s.symbol] = s.direction
         # sleep until a few seconds after the next candle closes
@@ -112,18 +125,31 @@ def cmd_watch(args):
 def cmd_backtest(args):
     print(f"\nBacktest | {args.interval} candles | expiry {args.expiry} candle(s) | "
           f"threshold {args.threshold} | payout {args.payout:.0%}")
-    print("-" * 70)
-    print(f"{'Asset':<9} {'Signals':>8} {'Wins':>6} {'Win rate':>9} {'Break-even':>11} {'Net units':>10}")
+    print("-" * 84)
+    print(f"{'Asset':<9} {'Signals':>8} {'Win rate':>9} {'Net units':>10}   "
+          f"{'No filters: signals':>20} {'win rate':>9} {'net':>7}")
+    be = 1 / (1 + args.payout)
     for sym in args.symbols:
         try:
             df = data.fetch(sym, args.interval, 1000, demo=args.demo)
-            r = backtest(df, sym, args.expiry, args.threshold, args.payout)
-            print(f"{sym:<9} {r.signals:>8} {r.wins:>6} {r.win_rate:>9.1%} {r.breakeven:>11.1%} {r.net_units:>+10.1f}")
+            c = data.is_crypto(sym)
+            r = backtest(df, sym, args.expiry, args.threshold, args.payout, crypto=c)
+            raw = backtest(df, sym, args.expiry, args.threshold, args.payout, crypto=c, use_filters=False)
+            print(f"{sym:<9} {r.signals:>8} {r.win_rate:>9.1%} {r.net_units:>+10.1f}   "
+                  f"{raw.signals:>20} {raw.win_rate:>9.1%} {raw.net_units:>+7.1f}")
         except Exception as e:
             print(f"{sym:<9} error: {e}", file=sys.stderr)
-    print("-" * 70)
-    print("A win rate below break-even means the signals lost money on this history.")
+    print("-" * 84)
+    print(f"Break-even win rate at {args.payout:.0%} payout: {be:.1%}. Below that, the signals lost money.")
+    print("'No filters' ignores the higher-timeframe, volatility and session filters, for comparison.")
     print(DISCLAIMER + "\n")
+
+
+def cmd_risk(args):
+    plan = risk.RiskPlan(args.balance, args.risk, args.daily_loss, args.max_losses, args.payout)
+    print("\nRisk plan\n" + "-" * 60)
+    print(plan.summary())
+    print("-" * 60 + "\n" + DISCLAIMER + "\n")
 
 
 def main(argv=None):
@@ -141,11 +167,13 @@ def main(argv=None):
     s = sub.add_parser("scan", help="analyse assets once")
     common(s)
     s.add_argument("-v", "--verbose", action="store_true", help="show reasons for every asset")
-    s.set_defaults(func=lambda a: run_scan(a.symbols, a.interval, a.threshold, a.demo, a.verbose))
+    s.add_argument("--min-agree", type=int, default=0, help="only show CALL/PUT when this many of 4 groups agree")
+    s.set_defaults(func=lambda a: run_scan(a.symbols, a.interval, a.threshold, a.demo, a.verbose, a.min_agree))
 
     w = sub.add_parser("watch", help="re-scan at every candle close, optional Telegram alerts")
     common(w)
     w.add_argument("-v", "--verbose", action="store_true")
+    w.add_argument("--min-agree", type=int, default=2, help="only alert when this many of 4 groups agree (default 2)")
     w.set_defaults(func=cmd_watch)
 
     b = sub.add_parser("backtest", help="measure how past signals would have done")
@@ -153,6 +181,14 @@ def main(argv=None):
     b.add_argument("--expiry", type=int, default=1, help="expiry in candles (1 = one candle ahead)")
     b.add_argument("--payout", type=float, default=0.85, help="broker payout, e.g. 0.85 for 85%%")
     b.set_defaults(func=cmd_backtest)
+
+    r = sub.add_parser("risk", help="stake size and daily stop for your balance")
+    r.add_argument("balance", type=float, help="your account balance")
+    r.add_argument("--risk", type=float, default=1.0, help="%% of balance per trade (default 1)")
+    r.add_argument("--daily-loss", type=float, default=5.0, help="daily loss limit in %% (default 5)")
+    r.add_argument("--max-losses", type=int, default=3, help="stop after this many losses in a row")
+    r.add_argument("--payout", type=float, default=0.85)
+    r.set_defaults(func=cmd_risk)
 
     tg = sub.add_parser("telegram-chatid", help="show the chat id of whoever messaged your bot")
     tg.set_defaults(func=cmd_telegram_chatid)

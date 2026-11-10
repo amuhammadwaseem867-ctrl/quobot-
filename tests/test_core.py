@@ -50,3 +50,46 @@ def test_load_env(tmp_path, monkeypatch):
     f.write_text('# comment\nexport TELEGRAM_CHAT_ID="12345"\n')
     telegram.load_env(f)
     assert telegram.credentials()[1] == "12345"
+
+
+def test_no_lookahead_bias():
+    """Scores for past candles must not change when newer candles arrive."""
+    from today_trader.signals import score_frame
+    df = data.demo_candles(n=500, seed=3)
+    full = score_frame(df)
+    for cut in (250, 333, 420):
+        part = score_frame(df.iloc[:cut])
+        assert np.allclose(full["score"].iloc[cut - 30:cut].values, part["score"].iloc[-30:].values)
+
+
+def test_random_walk_is_near_coin_flip():
+    """On pure noise the bot must not 'find' an edge (would mean a bug)."""
+    rng = np.random.default_rng(0)
+    n = 3000
+    close = 1.1 * np.exp(np.cumsum(rng.normal(0, 0.001, n)))
+    o = np.r_[close[0], close[:-1]]
+    sp = np.abs(rng.normal(0, 0.0006, n)) * close
+    df = pd.DataFrame({"open": o, "high": np.maximum(o, close) + sp, "low": np.minimum(o, close) - sp,
+                       "close": close, "volume": 1.0},
+                      index=pd.date_range("2026-11-02 08:00", periods=n, freq="1min", tz="UTC"))
+    r = backtest(df, "RW", use_filters=False)
+    assert 0.44 < r.win_rate < 0.56
+
+
+def test_bullish_engulfing_detected():
+    from today_trader import candles
+    df = pd.DataFrame({"open": [1.10, 1.09, 1.085], "high": [1.101, 1.091, 1.10],
+                       "low": [1.089, 1.084, 1.084], "close": [1.09, 1.086, 1.095]})
+    assert candles.engulfing(df).iloc[-1] == 1
+
+
+def test_weekend_forex_is_blocked():
+    from today_trader.sessions import session_quality
+    assert session_quality(pd.Timestamp("2026-11-14 12:00", tz="UTC"))[0] == 0
+    assert session_quality(pd.Timestamp("2026-11-14 12:00", tz="UTC"), crypto=True)[0] == 1
+
+
+def test_risk_plan():
+    from today_trader.risk import RiskPlan
+    p = RiskPlan(200, risk_pct=1)
+    assert p.stake == 2 and p.martingale_cost(5) == 62
