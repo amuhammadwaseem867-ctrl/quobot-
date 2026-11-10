@@ -179,15 +179,21 @@ def cmd_backtest(args):
     print(DISCLAIMER + "\n")
 
 
+def plain(html_text: str) -> str:
+    """Telegram HTML -> terminal text (same layout and emojis, no tags)."""
+    import html
+    import re
+    return html.unescape(re.sub(r"</?(b|i|code)>", "", html_text))
+
+
 def cmd_read(args):
     for sym in args.symbols:
         try:
             df = data.fetch(sym, args.interval, HISTORY, demo=args.demo)
             m = read_market(df, sym, args.interval, data.is_crypto(sym), args.expiry, args.threshold)
-            print("\n" + "=" * 78 + "\n" + format_read(m, args.payout))
+            print("\n" + plain(read_message(m, payout=args.payout)) + "\n")
         except Exception as e:
             print(f"{sym}: error: {e}", file=sys.stderr)
-    print("=" * 78 + "\n" + DISCLAIMER + "\n")
 
 
 def run_study(symbol, interval, demo=False, payout=0.85, quiet=False):
@@ -204,7 +210,7 @@ def cmd_study(args):
         try:
             print(f"Studying {sym} {args.interval}...")
             r = run_study(sym, args.interval, args.demo, args.payout)
-            text = html.unescape(re.sub(r"</?(b|i|code)>", "", study_message(r)))
+            text = plain(study_message(r))
             print(text + "\n")
         except Exception as e:
             print(f"{sym}: error: {e}", file=sys.stderr)
