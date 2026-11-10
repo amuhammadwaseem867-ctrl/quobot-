@@ -172,14 +172,47 @@ def read_message(m: MarketRead, alert: bool = False, payout: float = 0.85) -> st
     return "\n".join(out)
 
 
-def scan_message(rows, interval: str) -> str:
+def scan_message(rows, interval: str, errors: dict | None = None, title: str = "Market scan") -> str:
+    from .assets import KIND_NAMES, kind
     now = pd.Timestamp.now(tz="UTC")
-    out = [f"📡 <b>Market scan</b> · {interval} · {lt.hhmm(now)} ({lt.label()})", LINE]
-    for s in rows:
-        icon = "🟢" if s.direction.startswith("CALL") else "🔴" if s.direction.startswith("PUT") else "⚪"
-        word = "CALL ⬆️" if icon == "🟢" else "PUT ⬇️" if icon == "🔴" else "WAIT"
-        out.append(f"{icon} <b>{escape(s.symbol)}</b>  {word}  {strength_bar(s.score, 5)} {abs(s.score):.0f}  · {s.confluence}/4")
-    out += ["", "<i>Strength 0-100 · x/4 = groups agreeing. Send an asset name (e.g. EURUSD) for the full explanation.</i>"]
+    active = [s for s in rows if s.direction != "WAIT"]
+    out = [f"📡 <b>{escape(title)}</b> · {interval} · {lt.hhmm(now)} ({lt.label()})", LINE,
+           f"🟢🔴 <b>{len(active)}</b> signal(s) out of {len(rows)} assets"]
+    if active:
+        out += ["", "<b>🔔 Signals now</b>"]
+        for s in active:
+            icon, word = ("🟢", "CALL ⬆️") if s.direction.startswith("CALL") else ("🔴", "PUT ⬇️")
+            out.append(f"{icon} <b>{escape(s.symbol)}</b> {word} {strength_bar(s.score, 5)} {abs(s.score):.0f} · {s.confluence}/4")
+    waiting = [s for s in rows if s.direction == "WAIT"]
+    by_kind: dict[str, list] = {}
+    for s in waiting:
+        by_kind.setdefault(kind(s.symbol), []).append(s)
+    for k, items in by_kind.items():
+        closed = [x.symbol for x in items if x.warnings and x.warnings[0].startswith("Market closed")]
+        live = [x for x in items if x.symbol not in closed]
+        out += ["", f"<b>⚪ {KIND_NAMES.get(k, k)}: waiting</b>"]
+        if live:
+            out.append(" · ".join(f"{escape(x.symbol)} {'⬆' if x.score > 0 else '⬇'}{abs(x.score):.0f}" for x in live))
+        if closed:
+            out.append("💤 Closed: " + ", ".join(escape(c) for c in closed))
+    if errors:
+        out += ["", "⚠️ No data: " + ", ".join(escape(e) for e in errors)]
+    out += ["", "<i>Strength 0-100 · x/4 = groups agreeing · ⬆/⬇ = slight lean. "
+                "Send an asset name (e.g. EURUSD or gold) for the full explanation.</i>"]
+    return "\n".join(out)
+
+
+def assets_message() -> str:
+    from .assets import GROUPS
+    names = {"majors": "💶 Forex majors", "crosses": "💱 Forex crosses", "exotics": "🌏 Exotic forex",
+             "commodities": "🛢 Commodities", "indices": "📈 Indices", "stocks": "🏢 US stocks", "crypto": "🪙 Crypto"}
+    out = ["📋 <b>Assets I can analyse</b>", LINE]
+    for k, label in names.items():
+        out += ["", f"<b>{label}</b> (<code>/scan {k}</code>)", ", ".join(GROUPS[k])]
+    out += ["", "You can also type names: <code>gold</code>, <code>oil</code>, <code>apple</code>, "
+                "<code>bitcoin</code>, <code>dax</code>.",
+            "<code>/scan all</code> checks everything (takes about a minute).",
+            "<i>OTC assets can't be analysed: their prices come from Quotex itself.</i>"]
     return "\n".join(out)
 
 
@@ -202,11 +235,13 @@ def risk_message(plan: RiskPlan) -> str:
 HELP_MESSAGE = "\n".join([
     "🤖 <b>Quobot</b> · market analysis assistant", LINE,
     "<b>Ask me</b>",
-    "• <code>EURUSD</code> → full market read with prediction and reasons",
+    "• <code>EURUSD</code>, <code>gold</code>, <code>apple</code>, <code>BTC</code> → full market read with prediction and reasons",
     "• <code>EURUSD 5m</code> → same, on 5-minute candles",
     "• /scan → quick signal for every asset I watch",
     "• /study EURUSD → replay up to 10,000 past candles, learn the best settings, check them on unseen data",
     "• /risk 100 → stake size and daily stop for a balance of 100",
+    "• /scan forex (or crypto, stocks, indices, commodities, all) → scan a group",
+    "• /assets → every asset I know",
     "• /watchlist → assets I'm watching",
     "• /sessions → market session times in your time zone",
     "",

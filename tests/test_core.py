@@ -158,3 +158,14 @@ def test_local_time_is_pakistan_by_default(monkeypatch):
     from today_trader import localtime
     monkeypatch.delenv("TIMEZONE", raising=False)
     assert localtime.hhmm(pd.Timestamp("2026-11-10 16:00", tz="UTC")) == "9:00 PM"
+
+
+def test_assets_catalog():
+    from today_trader import assets
+    assert assets.normalize("gold") == "XAUUSD"
+    assert assets.normalize("EUR/USD OTC") == "EURUSD"
+    assert assets.normalize("bitcoin") == "BTCUSDT"
+    allx = assets.expand(["all"])
+    assert len(allx) == len(set(allx)) > 80
+    assert assets.expand(["forex", "gold", "EURUSD"])[-1] == "XAUUSD"
+    assert data.yahoo_ticker("GER40") == "^GDAXI" and data.is_crypto("TONUSDT")

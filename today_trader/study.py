@@ -242,6 +242,14 @@ def _best_hours(res) -> str:
         return ""
 
 
+def study_is_recent(symbol: str, interval: str, hours: float = 12, path: Path = SETTINGS_FILE) -> bool:
+    rec = load_study(symbol, interval, path)
+    if not rec or "studied_at" not in rec:
+        return False
+    age = pd.Timestamp.now(tz="UTC") - pd.Timestamp(rec["studied_at"])
+    return age < pd.Timedelta(hours=hours)
+
+
 def load_study(symbol: str, interval: str, path: Path = SETTINGS_FILE) -> dict | None:
     try:
         return json.loads(path.read_text()).get(_key(symbol, interval))

@@ -64,8 +64,27 @@ python -m today_trader risk 100
 python -m today_trader scan --demo
 ```
 
-Asset names: forex pairs as `EURUSD`, gold `XAUUSD`, silver `XAGUSD`, oil `USOIL`, indices `US30`
-`US500` `NAS100`, crypto as `BTCUSDT` `ETHUSDT`. Any other Yahoo Finance ticker also works.
+### Assets
+
+The bot knows every real-market asset type Quotex offers, about 90 in all:
+
+| Group | Assets |
+|---|---|
+| `majors` | EURUSD GBPUSD USDJPY USDCHF AUDUSD USDCAD NZDUSD |
+| `crosses` | EURGBP EURJPY GBPJPY AUDJPY ... (21 pairs) |
+| `exotics` | USDINR USDPKR USDTRY USDMXN USDZAR USDSGD USDBRL |
+| `commodities` | XAUUSD (gold) XAGUSD (silver) USOIL UKOIL NATGAS COPPER PLATINUM |
+| `indices` | US500 US30 NAS100 GER40 UK100 FRA40 EU50 JP225 HK50 AUS200 |
+| `stocks` | AAPL MSFT AMZN GOOGL META TSLA NVDA NFLX ... (22 US stocks) |
+| `crypto` | BTCUSDT ETHUSDT BNBUSDT SOLUSDT XRPUSDT DOGEUSDT ... (16 coins) |
+
+Use a group name or `all` anywhere you'd type an asset: `python -m today_trader scan forex crypto`,
+`/scan stocks` in Telegram. Plain names work too: `gold`, `oil`, `apple`, `bitcoin`, `dax`.
+`python -m today_trader assets` lists everything. Closed markets (stocks at night, forex at
+weekends) are shown as 💤 closed instead of giving signals. OTC assets can't be analysed.
+
+Watching `all` with the bot on 1-minute candles makes ~90 data requests a minute, which can be slow
+or get rate-limited by Yahoo. Watch the groups you actually trade, and use `/scan all` on demand.
 
 ### Telegram alerts (optional)
 

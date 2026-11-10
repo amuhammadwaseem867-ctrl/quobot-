@@ -15,9 +15,11 @@ import time
 from datetime import datetime, timezone
 
 from . import data, risk, telegram
+from . import assets
 from .bot import QuobotChat
+from .engine import analyze_many, mark_closed
 from .market_read import format_read, read_market
-from .study import SETTINGS_FILE, load_study, save_study, study
+from .study import SETTINGS_FILE, load_study, save_study, study, study_is_recent
 from .tg_format import read_message, study_message
 from .backtest import backtest
 from .signals import DEFAULT_THRESHOLD, analyze
@@ -28,7 +30,7 @@ DISCLAIMER = (
     "from these feeds. Binary options are high risk; most traders lose money."
 )
 
-DEFAULT_WATCHLIST = ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "EURJPY", "XAUUSD", "BTCUSDT", "ETHUSDT"]
+DEFAULT_WATCHLIST = ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "EURJPY", "GBPJPY", "XAUUSD", "BTCUSDT", "ETHUSDT"]
 HISTORY = 10000  # candles of history to learn from (Yahoo 1m keeps ~30 days)
 INTERVAL_SECONDS = {"1m": 60, "2m": 120, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600}
 
@@ -46,18 +48,9 @@ def bar(score: float, width: int = 20) -> str:
 
 
 def run_scan(symbols, interval, threshold, demo, verbose, min_confluence=0):
-    results = []
-    for sym in symbols:
-        try:
-            df = data.fetch(sym, interval, demo=demo)
-            sig = analyze(df, sym, interval, threshold, crypto=data.is_crypto(sym))
-            if sig.direction != "WAIT" and sig.confluence < min_confluence:
-                sig.warnings.append(f"Only {sig.confluence}/4 groups agree (need {min_confluence})")
-                sig.direction = "WAIT"
-            results.append(sig)
-        except Exception as e:  # keep going if one feed fails
-            print(f"  {sym:<9} error: {e}", file=sys.stderr)
-    results.sort(key=lambda s: -abs(s.score))
+    results, errors = analyze_many(symbols, interval, threshold, demo, min_confluence)
+    for sym, e in errors.items():
+        print(f"  {sym:<9} error: {e}", file=sys.stderr)
 
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     print(f"\nQuobot market scan  |  {interval} candles  |  {now}" + ("  |  DEMO DATA" if demo else ""))
@@ -144,13 +137,22 @@ def cmd_watch(args):
 
 
 def cmd_bot(args):
-    print("Learning from history first (this takes a minute)...")
-    for sym in args.symbols:
-        try:
-            r = run_study(sym, args.interval, args.demo)
-            print(f"  {sym}: {r.verdict}")
-        except Exception as e:
-            print(f"  {sym}: couldn't study ({type(e).__name__})", file=sys.stderr)
+    todo = [s for s in args.symbols if not study_is_recent(s, args.interval)]
+    if todo:
+        print(f"Learning from history for {len(todo)} asset(s) first (about 10-20 seconds each)...")
+        from concurrent.futures import ThreadPoolExecutor
+
+        def learn(sym):
+            try:
+                return sym, run_study(sym, args.interval, args.demo).verdict
+            except Exception as e:
+                return sym, f"couldn't study ({type(e).__name__})"
+
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            for sym, verdict in ex.map(learn, todo):
+                print(f"  {sym}: {verdict}")
+    else:
+        print("Using what I learned in the last 12 hours (delete quobot_settings.json to re-learn).")
     chat = QuobotChat(args.symbols, args.interval, args.threshold, args.min_agree, HISTORY, args.demo, DISCLAIMER,
                       study_fn=run_study)
     chat.run(INTERVAL_SECONDS.get(args.interval, 60), make_alerter(args))
@@ -191,6 +193,8 @@ def cmd_read(args):
         try:
             df = data.fetch(sym, args.interval, HISTORY, demo=args.demo)
             m = read_market(df, sym, args.interval, data.is_crypto(sym), args.expiry, args.threshold)
+            if not args.demo and not data.is_fresh(df, args.interval):
+                mark_closed(m.signal)
             print("\n" + plain(read_message(m, payout=args.payout)) + "\n")
         except Exception as e:
             print(f"{sym}: error: {e}", file=sys.stderr)
@@ -231,7 +235,8 @@ def main(argv=None):
 
     def common(sp):
         sp.add_argument("symbols", nargs="*", default=DEFAULT_WATCHLIST,
-                        help="e.g. EURUSD GBPJPY XAUUSD BTCUSDT (default: a forex + crypto watchlist)")
+                        help="assets or groups, e.g. EURUSD gold BTC, or forex / majors / crosses / "
+                             "commodities / indices / stocks / crypto / all")
         sp.add_argument("-i", "--interval", default="5m", choices=list(INTERVAL_SECONDS))
         sp.add_argument("-t", "--threshold", type=float, default=DEFAULT_THRESHOLD,
                         help="minimum |score| (0-100) before a direction is shown")
@@ -285,8 +290,14 @@ def main(argv=None):
     tt = sub.add_parser("telegram-test", help="send a test alert to Telegram")
     tt.set_defaults(func=cmd_telegram_test)
 
+    a = sub.add_parser("assets", help="list every asset and group the bot knows")
+    a.set_defaults(func=lambda _a: print(assets.catalog_text() + "\n\nYou can also type names like gold, oil, "
+                                         "apple, bitcoin, or any Yahoo Finance ticker."))
+
     telegram.load_env()
     args = p.parse_args(argv)
+    if hasattr(args, "symbols"):
+        args.symbols = assets.expand(args.symbols)
     try:
         args.func(args)
     except KeyboardInterrupt:

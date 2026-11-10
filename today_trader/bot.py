@@ -6,10 +6,11 @@ from __future__ import annotations
 import sys
 import time
 
-from . import data, risk, telegram
+from . import assets, data, risk, telegram
+from .engine import analyze_many, mark_closed
 from .market_read import read_market
 from .study import load_study
-from .tg_format import HELP_MESSAGE, read_message, risk_message, scan_message, sessions_message, study_message
+from .tg_format import HELP_MESSAGE, assets_message, read_message, risk_message, scan_message, sessions_message, study_message
 from .signals import DEFAULT_THRESHOLD, analyze
 
 INTERVALS = {"1m", "2m", "5m", "15m", "30m", "1h"}
@@ -30,18 +31,15 @@ class QuobotChat:
         learned = load_study(symbol, iv)
         expiry = learned["best"]["expiry"] if learned and learned.get("best") else 1
         m = read_market(df, symbol, iv, data.is_crypto(symbol), expiry, self.threshold)
+        if not self.demo and not data.is_fresh(df, iv):
+            mark_closed(m.signal)
         return read_message(m)
 
-    def scan_text(self) -> str:
-        rows, errors = [], []
-        for sym in self.symbols:
-            try:
-                df = data.fetch(sym, self.interval, demo=self.demo)
-                rows.append(analyze(df, sym, self.interval, self.threshold, crypto=data.is_crypto(sym)))
-            except Exception as e:
-                errors.append(f"⚠️ {sym}: couldn't load data ({type(e).__name__})")
-        text = scan_message(sorted(rows, key=lambda s: -abs(s.score)), self.interval)
-        return text + ("\n" + "\n".join(errors) if errors else "")
+    def scan_text(self, group: str | None = None) -> str:
+        symbols = assets.expand([group]) if group else self.symbols
+        title = f"Scan: {group}" if group else "Watchlist scan"
+        rows, errors = analyze_many(symbols, self.interval, self.threshold, self.demo)
+        return scan_message(rows, self.interval, errors, title)
 
     def reply(self, text: str) -> str:
         parts = text.strip().split()
@@ -51,7 +49,9 @@ class QuobotChat:
         if cmd in ("/start", "/help", "help"):
             return HELP_MESSAGE
         if cmd == "/scan":
-            return self.scan_text()
+            return self.scan_text(parts[1] if len(parts) > 1 else None)
+        if cmd == "/assets":
+            return assets_message()
         if cmd == "/sessions":
             return sessions_message()
         if cmd == "/study":
@@ -65,14 +65,15 @@ class QuobotChat:
                 return study_message(study(df, sym, iv, data.is_crypto(sym)))
             return study_message(self.study_fn(sym, iv, self.demo))
         if cmd == "/watchlist":
-            return "👀 <b>Watchlist</b> · " + self.interval + "\n" + "\n".join(f"• {x}" for x in self.symbols)
+            return ("👀 <b>Watchlist</b> · " + self.interval + f" · {len(self.symbols)} assets\n"
+                    + ", ".join(self.symbols) + "\n\nI send an alert when any of these gives a signal.")
         if cmd == "/risk":
             try:
                 bal = float(parts[1])
             except (IndexError, ValueError):
                 return "Send it like this: <code>/risk 100</code>"
             return risk_message(risk.RiskPlan(bal))
-        symbol = parts[0].upper().lstrip("/")
+        symbol = assets.normalize(parts[0].lstrip("/"))
         interval = parts[1].lower() if len(parts) > 1 and parts[1].lower() in INTERVALS else None
         try:
             return self.read_text(symbol, interval)

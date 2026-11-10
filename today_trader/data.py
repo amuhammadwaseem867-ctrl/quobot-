@@ -17,15 +17,7 @@ import requests
 
 UA = {"User-Agent": "Mozilla/5.0 (today-trader market analysis)"}
 
-# Friendly names -> Yahoo tickers. Anything not here is passed through as-is.
-YAHOO_ALIASES = {
-    "XAUUSD": "GC=F",  # gold futures
-    "XAGUSD": "SI=F",  # silver futures
-    "USOIL": "CL=F",
-    "US30": "^DJI",
-    "US500": "^GSPC",
-    "NAS100": "^NDX",
-}
+from .assets import YAHOO as YAHOO_ALIASES  # noqa: E402
 
 CRYPTO_QUOTES = ("USDT", "USDC", "BUSD", "FDUSD")
 
@@ -157,3 +149,12 @@ def fetch(symbol: str, interval: str = "5m", limit: int = 600, demo: bool = Fals
     else:
         df = fetch_yahoo(symbol, interval, limit + 1)
     return drop_open_candle(df, interval).tail(limit)
+
+
+def is_fresh(df: pd.DataFrame, interval: str, candles: int = 5) -> bool:
+    """False when the newest candle is old: the market is closed (stocks at
+    night, forex at weekends) or the feed has stalled."""
+    if df.empty:
+        return False
+    age = pd.Timestamp.now(tz="UTC") - df.index[-1]
+    return age <= pd.Timedelta(INTERVAL_DELTA.get(interval, "1min")) * candles
