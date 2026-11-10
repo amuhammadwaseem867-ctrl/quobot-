@@ -10,6 +10,12 @@ import requests
 
 API = "https://api.telegram.org/bot{token}/{method}"
 
+UNREACHABLE_HINT = (
+    "Your internet connection can't reach api.telegram.org. Some networks block it.\n"
+    "Turn on a VPN and try again, or set HTTPS_PROXY to a working proxy.\n"
+    "Tip: you can get your chat id without the API by messaging @userinfobot in Telegram."
+)
+
 
 def load_env(path: str | Path = ".env") -> None:
     """Minimal .env loader: KEY=value lines; real environment variables win."""
@@ -32,7 +38,7 @@ def credentials() -> tuple[str | None, str | None]:
 
 def _call(method: str, token: str, **data) -> dict:
     try:
-        r = requests.post(API.format(token=token, method=method), data=data, timeout=15)
+        r = requests.post(API.format(token=token, method=method), data=data, timeout=30)
     except requests.RequestException as e:
         # don't print the exception text: it can contain the URL, which holds the token
         raise RuntimeError(f"could not reach Telegram ({type(e).__name__})") from None
@@ -51,6 +57,8 @@ def send(text: str) -> bool:
         return True
     except RuntimeError as e:
         print(f"Telegram send failed: {e}", file=sys.stderr)
+        if "could not reach" in str(e):
+            print(UNREACHABLE_HINT, file=sys.stderr)
         return False
 
 

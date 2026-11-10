@@ -69,7 +69,10 @@ def cmd_telegram_chatid(_args):
     token, _ = telegram.credentials()
     if not token:
         sys.exit("Set TELEGRAM_BOT_TOKEN first (in .env or the environment).")
-    chats = telegram.find_chat_ids(token)
+    try:
+        chats = telegram.find_chat_ids(token)
+    except RuntimeError as e:
+        sys.exit(f"{e}\n{telegram.UNREACHABLE_HINT}")
     if not chats:
         sys.exit("No messages found. Open your bot in Telegram, send it any message, then run this again.")
     print("Chats that messaged your bot:")
