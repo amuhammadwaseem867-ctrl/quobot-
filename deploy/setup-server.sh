@@ -21,6 +21,7 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3 python3-venv pytho
 id -u "$RUN_USER" >/dev/null 2>&1 || useradd --system --create-home --shell /usr/sbin/nologin "$RUN_USER"
 
 echo "==> Getting the bot code"
+git config --global --add safe.directory "$DIR" 2>/dev/null || true
 if [ -d "$DIR/.git" ]; then
   git -C "$DIR" pull --ff-only
 else
