@@ -48,12 +48,13 @@ def _call(method: str, token: str, http_timeout: float = 30, **data) -> dict:
     return body["result"]
 
 
-def send(text: str) -> bool:
+def send(text: str, html: bool = False) -> bool:
     token, chat = credentials()
     if not (token and chat):
         return False
     try:
-        _call("sendMessage", token, chat_id=chat, text=text)
+        extra = {"parse_mode": "HTML", "disable_web_page_preview": "true"} if html else {}
+        _call("sendMessage", token, chat_id=chat, text=text, **extra)
         return True
     except RuntimeError as e:
         print(f"Telegram send failed: {e}", file=sys.stderr)
@@ -82,7 +83,17 @@ def get_updates(token: str, offset: int | None, wait: int) -> list[dict]:
     return _call("getUpdates", token, http_timeout=wait + 15, **data)
 
 
-def send_to(chat_id: str, text: str) -> None:
+def send_to(chat_id: str, text: str, html: bool = False) -> None:
     token, _ = credentials()
-    for i in range(0, len(text), 4000):  # Telegram limit is 4096 chars
-        _call("sendMessage", token, chat_id=chat_id, text=text[i:i + 4000])
+    extra = {"parse_mode": "HTML", "disable_web_page_preview": "true"} if html else {}
+    # split on blank lines so HTML tags are never cut in half (limit is 4096 chars)
+    chunks, cur = [], ""
+    for block in text.split("\n\n"):
+        if cur and len(cur) + len(block) + 2 > 4000:
+            chunks.append(cur)
+            cur = block
+        else:
+            cur = f"{cur}\n\n{block}" if cur else block
+    chunks.append(cur)
+    for c in chunks:
+        _call("sendMessage", token, chat_id=chat_id, text=c, **extra)

@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from . import data, risk, telegram
 from .bot import QuobotChat
 from .market_read import format_read, read_market
+from .tg_format import read_message
 from .backtest import backtest
 from .signals import DEFAULT_THRESHOLD, analyze
 
@@ -98,7 +99,7 @@ def cmd_telegram_test(_args):
     token, chat = telegram.credentials()
     if not (token and chat):
         sys.exit("Set both TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID first (in .env or the environment).")
-    if telegram.send("Quobot is connected. You'll get alerts here when an asset's bias changes.\n\n" + DISCLAIMER):
+    if telegram.send("✅ <b>Quobot is connected</b>\nYou'll get alerts here. Run the bot and send /help.", html=True):
         print("Test message sent. Check Telegram.")
     else:
         sys.exit(1)
@@ -114,10 +115,9 @@ def make_alerter(args):
                 try:
                     df = data.fetch(s.symbol, s.interval, HISTORY, demo=args.demo)
                     m = read_market(df, s.symbol, s.interval, data.is_crypto(s.symbol), 1, args.threshold)
-                    text = format_read(m)
+                    telegram.send(read_message(m, alert=True), html=True)
                 except Exception:
-                    text = f"{s.symbol} {s.interval}: {s.direction}, score {s.score:+.0f}"
-                telegram.send(f"ALERT\n{text}\n\n{DISCLAIMER}")
+                    telegram.send(f"{s.symbol} {s.interval}: {s.direction}, score {s.score:+.0f}\n\n{DISCLAIMER}")
             last_alert[s.symbol] = s.direction
 
     return alert

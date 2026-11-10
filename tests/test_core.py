@@ -105,10 +105,31 @@ def test_market_read_runs_and_explains():
 
 
 def test_bot_replies():
-    from today_trader.bot import HELP, QuobotChat
+    from html.parser import HTMLParser
+
+    from today_trader.bot import QuobotChat
+    from today_trader.tg_format import HELP_MESSAGE
+
+    class TagCheck(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.stack = []
+
+        def handle_starttag(self, tag, attrs):
+            assert tag in ("b", "i", "code"), tag
+            self.stack.append(tag)
+
+        def handle_endtag(self, tag):
+            assert self.stack.pop() == tag
+
     bot = QuobotChat(["EURUSD", "BTCUSDT"], "5m", demo=True)
-    assert bot.reply("/help") == HELP
-    assert "Prediction:" in bot.reply("eurusd")
-    assert "EURUSD" in bot.reply("/scan")
-    assert "Stake per trade" in bot.reply("/risk 100")
-    assert "like this" in bot.reply("/risk abc")
+    replies = [bot.reply(x) for x in ("/help", "eurusd", "EURUSD 1m", "/scan", "/risk 100", "/risk abc", "/watchlist")]
+    assert replies[0] == HELP_MESSAGE
+    assert "Verdict" in replies[1] and "What the market is doing" in replies[1]
+    assert "EURUSD" in replies[3]
+    assert "Stake per trade" in replies[4]
+    assert "like this" in replies[5]
+    for r in replies:
+        p = TagCheck()
+        p.feed(r)
+        assert not p.stack and len(r) < 4096

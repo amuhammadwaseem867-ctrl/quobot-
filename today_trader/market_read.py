@@ -24,6 +24,9 @@ class MarketRead:
     hit_rate: float = float("nan")
     samples: int = 0
     hit_by_expiry: dict = field(default_factory=dict)
+    groups: dict = field(default_factory=dict)
+    lean: int = 0
+    stop: float = float("nan")
 
 
 def _fmt(p: float) -> str:
@@ -127,8 +130,11 @@ def read_market(df: pd.DataFrame, symbol: str, interval: str, crypto: bool = Fal
         inval = ""
     exp = f"Typical move over {expiry} candle(s): about {_fmt(move)} (from ATR)."
 
+    from .signals import GROUPS
     return MarketRead(sig, pred, expiry, story, why, against, inval, exp, hr, n,
-                      {e: v for e, v in hit_by.items()})
+                      {e: v for e, v in hit_by.items()},
+                      groups={g: int(row[f"group_{g}"]) for g in GROUPS}, lean=lean,
+                      stop=float(stop) if sign else float("nan"))
 
 
 def format_read(m: MarketRead, payout: float = 0.85) -> str:
