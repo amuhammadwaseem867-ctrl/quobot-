@@ -1,0 +1,8 @@
+.git
+.venv
+.env
+__pycache__
+*.pyc
+quobot_settings.json
+quobot_picks.csv
+tests

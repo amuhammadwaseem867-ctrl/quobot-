@@ -173,6 +173,12 @@ The bot then does two things on its own:
 It only answers the chat id in your `.env`, so nobody else can use your bot. It works while your PC
 is on and connected (keep the VPN on if your network blocks Telegram).
 
+## Run it 24/7 on a cloud server
+
+See **[DEPLOY.md](DEPLOY.md)** (Roman Urdu): rent a small Ubuntu server (Oracle free tier or ~$5/month),
+run one command, and the bot keeps going with your PC off. No VPN needed on a server outside Pakistan.
+A `Dockerfile` is included too.
+
 ## How the score works
 
 The bot follows a day trader's checklist. Each candle gets a score from -100 (strongly down) to
