@@ -15,6 +15,7 @@ import time
 from datetime import datetime, timezone
 
 from . import data, risk, telegram
+from .bot import QuobotChat
 from .market_read import format_read, read_market
 from .backtest import backtest
 from .signals import DEFAULT_THRESHOLD, analyze
@@ -103,12 +104,10 @@ def cmd_telegram_test(_args):
         sys.exit(1)
 
 
-def cmd_watch(args):
-    step = INTERVAL_SECONDS.get(args.interval, 60)
+def make_alerter(args):
     last_alert: dict[str, str] = {}
-    alerts = "Telegram alerts ON" if all(telegram.credentials()) else "Telegram alerts off (no token/chat id)"
-    print(f"Watching {', '.join(args.symbols)} on {args.interval}. {alerts}. Ctrl+C to stop.")
-    while True:
+
+    def alert():
         results = run_scan(args.symbols, args.interval, args.threshold, args.demo, args.verbose, args.min_agree)
         for s in results:
             if s.direction != "WAIT" and last_alert.get(s.symbol) != s.direction:
@@ -118,11 +117,26 @@ def cmd_watch(args):
                     text = format_read(m)
                 except Exception:
                     text = f"{s.symbol} {s.interval}: {s.direction}, score {s.score:+.0f}"
-                telegram.send(f"{text}\n\n{DISCLAIMER}")
+                telegram.send(f"ALERT\n{text}\n\n{DISCLAIMER}")
             last_alert[s.symbol] = s.direction
+
+    return alert
+
+
+def cmd_watch(args):
+    step = INTERVAL_SECONDS.get(args.interval, 60)
+    alert = make_alerter(args)
+    alerts = "Telegram alerts ON" if all(telegram.credentials()) else "Telegram alerts off (no token/chat id)"
+    print(f"Watching {', '.join(args.symbols)} on {args.interval}. {alerts}. Ctrl+C to stop.")
+    while True:
+        alert()
         # sleep until a few seconds after the next candle closes
-        wait = step - (time.time() % step) + 3
-        time.sleep(wait)
+        time.sleep(step - (time.time() % step) + 3)
+
+
+def cmd_bot(args):
+    chat = QuobotChat(args.symbols, args.interval, args.threshold, args.min_agree, HISTORY, args.demo, DISCLAIMER)
+    chat.run(INTERVAL_SECONDS.get(args.interval, 60), make_alerter(args))
 
 
 def cmd_backtest(args):
@@ -189,6 +203,12 @@ def main(argv=None):
     w.add_argument("-v", "--verbose", action="store_true")
     w.add_argument("--min-agree", type=int, default=2, help="only alert when this many of 4 groups agree (default 2)")
     w.set_defaults(func=cmd_watch)
+
+    bt = sub.add_parser("bot", help="Telegram bot that answers your messages and sends alerts")
+    common(bt)
+    bt.add_argument("-v", "--verbose", action="store_true")
+    bt.add_argument("--min-agree", type=int, default=2, help="only alert when this many of 4 groups agree (default 2)")
+    bt.set_defaults(func=cmd_bot)
 
     b = sub.add_parser("backtest", help="measure how past signals would have done")
     common(b)

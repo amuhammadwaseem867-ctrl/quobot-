@@ -86,6 +86,33 @@ Asset names: forex pairs as `EURUSD`, gold `XAUUSD`, silver `XAGUSD`, oil `USOIL
 You get a message whenever an asset's bias changes to CALL or PUT. The bot only sends alerts while
 `watch` is running, so leave that window open (or run it on an always-on PC or server).
 
+### Two-way Telegram bot (recommended)
+
+```bash
+python -m today_trader bot EURUSD GBPUSD XAUUSD BTCUSDT -i 1m
+```
+
+On Windows you can just double-click **start-bot.bat** instead. It restarts the bot by itself if
+your connection drops. Edit the file to change the assets or timeframe.
+
+The bot then does two things on its own:
+
+- **Sends signals by itself.** At every candle close it scans your assets and sends you the full
+  market read whenever a new CALL or PUT appears with at least 2 of 4 groups agreeing.
+- **Answers your messages:**
+
+| You send | It replies |
+|---|---|
+| `EURUSD` | market read for that asset (any asset name) |
+| `EURUSD 5m` | same, on another timeframe |
+| `/scan` | signal for every asset on the watchlist |
+| `/risk 100` | stake size and daily stop for a balance of 100 |
+| `/watchlist` | the assets being watched |
+| `/help` | the list of commands |
+
+It only answers the chat id in your `.env`, so nobody else can use your bot. It works while your PC
+is on and connected (keep the VPN on if your network blocks Telegram).
+
 ## How the score works
 
 The bot follows a day trader's checklist. Each candle gets a score from -100 (strongly down) to

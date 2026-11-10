@@ -102,3 +102,13 @@ def test_market_read_runs_and_explains():
     text = format_read(m)
     assert "Prediction:" in text and "What the market is doing" in text
     assert m.prediction.split()[0] in ("UP", "DOWN", "NO")
+
+
+def test_bot_replies():
+    from today_trader.bot import HELP, QuobotChat
+    bot = QuobotChat(["EURUSD", "BTCUSDT"], "5m", demo=True)
+    assert bot.reply("/help") == HELP
+    assert "Prediction:" in bot.reply("eurusd")
+    assert "EURUSD" in bot.reply("/scan")
+    assert "Stake per trade" in bot.reply("/risk 100")
+    assert "like this" in bot.reply("/risk abc")

@@ -36,9 +36,9 @@ def credentials() -> tuple[str | None, str | None]:
     return os.getenv("TELEGRAM_BOT_TOKEN"), os.getenv("TELEGRAM_CHAT_ID")
 
 
-def _call(method: str, token: str, **data) -> dict:
+def _call(method: str, token: str, http_timeout: float = 30, **data) -> dict:
     try:
-        r = requests.post(API.format(token=token, method=method), data=data, timeout=30)
+        r = requests.post(API.format(token=token, method=method), data=data, timeout=http_timeout)
     except requests.RequestException as e:
         # don't print the exception text: it can contain the URL, which holds the token
         raise RuntimeError(f"could not reach Telegram ({type(e).__name__})") from None
@@ -72,3 +72,17 @@ def find_chat_ids(token: str) -> list[tuple[str, str]]:
             name = chat.get("title") or " ".join(filter(None, [chat.get("first_name"), chat.get("last_name")]))
             seen[str(chat["id"])] = name or chat.get("username", "")
     return list(seen.items())
+
+
+def get_updates(token: str, offset: int | None, wait: int) -> list[dict]:
+    """Long-poll for new messages, waiting up to `wait` seconds."""
+    data = {"timeout": max(0, int(wait))}
+    if offset is not None:
+        data["offset"] = offset
+    return _call("getUpdates", token, http_timeout=wait + 15, **data)
+
+
+def send_to(chat_id: str, text: str) -> None:
+    token, _ = credentials()
+    for i in range(0, len(text), 4000):  # Telegram limit is 4096 chars
+        _call("sendMessage", token, chat_id=chat_id, text=text[i:i + 4000])
