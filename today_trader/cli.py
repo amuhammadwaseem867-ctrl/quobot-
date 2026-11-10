@@ -14,9 +14,7 @@ import sys
 import time
 from datetime import datetime, timezone
 
-import requests
-
-from . import data
+from . import data, telegram
 from .backtest import backtest
 from .signals import DEFAULT_THRESHOLD, analyze
 
@@ -67,26 +65,38 @@ def run_scan(symbols, interval, threshold, demo, verbose):
     return results
 
 
-def send_telegram(text: str) -> None:
-    token, chat = os.getenv("TELEGRAM_BOT_TOKEN"), os.getenv("TELEGRAM_CHAT_ID")
+def cmd_telegram_chatid(_args):
+    token, _ = telegram.credentials()
+    if not token:
+        sys.exit("Set TELEGRAM_BOT_TOKEN first (in .env or the environment).")
+    chats = telegram.find_chat_ids(token)
+    if not chats:
+        sys.exit("No messages found. Open your bot in Telegram, send it any message, then run this again.")
+    print("Chats that messaged your bot:")
+    for cid, name in chats:
+        print(f"  TELEGRAM_CHAT_ID={cid}    ({name})")
+
+
+def cmd_telegram_test(_args):
+    token, chat = telegram.credentials()
     if not (token and chat):
-        return
-    try:
-        requests.post(f"https://api.telegram.org/bot{token}/sendMessage",
-                      data={"chat_id": chat, "text": text}, timeout=15)
-    except requests.RequestException as e:
-        print(f"Telegram send failed: {e}", file=sys.stderr)
+        sys.exit("Set both TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID first (in .env or the environment).")
+    if telegram.send("Quobot is connected. You'll get alerts here when an asset's bias changes.\n\n" + DISCLAIMER):
+        print("Test message sent. Check Telegram.")
+    else:
+        sys.exit(1)
 
 
 def cmd_watch(args):
     step = INTERVAL_SECONDS.get(args.interval, 60)
     last_alert: dict[str, str] = {}
-    print(f"Watching {', '.join(args.symbols)} on {args.interval}. Ctrl+C to stop.")
+    alerts = "Telegram alerts ON" if all(telegram.credentials()) else "Telegram alerts off (no token/chat id)"
+    print(f"Watching {', '.join(args.symbols)} on {args.interval}. {alerts}. Ctrl+C to stop.")
     while True:
         results = run_scan(args.symbols, args.interval, args.threshold, args.demo, args.verbose)
         for s in results:
             if s.direction != "WAIT" and last_alert.get(s.symbol) != s.direction:
-                send_telegram(
+                telegram.send(
                     f"{s.symbol} {s.interval}: {s.direction} bias, score {s.score:+.0f} "
                     f"({s.regime}, RSI {s.rsi:.0f}) at {fmt_price(s.price)}\n\n{DISCLAIMER}"
                 )
@@ -141,6 +151,12 @@ def main(argv=None):
     b.add_argument("--payout", type=float, default=0.85, help="broker payout, e.g. 0.85 for 85%%")
     b.set_defaults(func=cmd_backtest)
 
+    tg = sub.add_parser("telegram-chatid", help="show the chat id of whoever messaged your bot")
+    tg.set_defaults(func=cmd_telegram_chatid)
+    tt = sub.add_parser("telegram-test", help="send a test alert to Telegram")
+    tt.set_defaults(func=cmd_telegram_test)
+
+    telegram.load_env()
     args = p.parse_args(argv)
     try:
         args.func(args)

@@ -57,17 +57,25 @@ Asset names: forex pairs as `EURUSD`, gold `XAUUSD`, silver `XAGUSD`, oil `USOIL
 
 ### Telegram alerts (optional)
 
-1. Create a bot with [@BotFather](https://t.me/BotFather) and copy its token.
-2. Send your bot a message, then open `https://api.telegram.org/bot<TOKEN>/getUpdates` to find your chat id.
-3. Set them before running `watch`:
+1. In Telegram, open **@BotFather**, send `/newbot`, pick a name and a username ending in `bot`.
+   BotFather replies with a **token** like `123456789:AAH...`. Keep it secret: anyone with it controls your bot.
+2. In the bot folder, copy `.env.example` to `.env` and paste the token after `TELEGRAM_BOT_TOKEN=`.
+   `.env` is in `.gitignore`, so it never gets pushed to GitHub.
+3. Open your new bot in Telegram, press **Start**, and send it any message.
+4. Find your chat id and add it to `.env` as `TELEGRAM_CHAT_ID=`:
 
-```bash
-export TELEGRAM_BOT_TOKEN=123456:ABC...
-export TELEGRAM_CHAT_ID=987654321
-python -m today_trader watch EURUSD XAUUSD -i 1m
-```
+   ```bash
+   python -m today_trader telegram-chatid
+   ```
+5. Check it works, then start watching:
 
-You get a message whenever an asset's bias changes to CALL or PUT.
+   ```bash
+   python -m today_trader telegram-test
+   python -m today_trader watch EURUSD GBPUSD XAUUSD -i 1m
+   ```
+
+You get a message whenever an asset's bias changes to CALL or PUT. The bot only sends alerts while
+`watch` is running, so leave that window open (or run it on an always-on PC or server).
 
 ## How the score works
 

@@ -41,3 +41,12 @@ def test_yahoo_ticker_mapping():
     assert data.yahoo_ticker("EURUSD") == "EURUSD=X"
     assert data.yahoo_ticker("XAUUSD") == "GC=F"
     assert data.is_crypto("BTCUSDT")
+
+
+def test_load_env(tmp_path, monkeypatch):
+    from today_trader import telegram
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+    f = tmp_path / ".env"
+    f.write_text('# comment\nexport TELEGRAM_CHAT_ID="12345"\n')
+    telegram.load_env(f)
+    assert telegram.credentials()[1] == "12345"
