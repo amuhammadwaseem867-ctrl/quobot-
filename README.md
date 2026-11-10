@@ -1,4 +1,4 @@
-# Today Trader
+# Quobot — Today Trader market analysis bot
 
 A market analysis bot for the assets you trade on Quotex (forex pairs, gold, indices, crypto).
 It pulls public price data, runs common technical indicators and prints a CALL / PUT / WAIT
@@ -23,7 +23,7 @@ alerts, and it can backtest its own signals so you can see whether they would ha
 Needs Python 3.10 or newer.
 
 ```bash
-git clone <this repo> today-trader
+git clone https://github.com/amuhammadwaseem867-ctrl/quobot- today-trader
 cd today-trader
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
