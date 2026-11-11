@@ -32,6 +32,7 @@ class QuobotChat:
         self.min_winrate = min_winrate
         self.fx_every, self.fx_sent = fx_every, set()
         self.err_sent: dict = {}
+        self.empty_sent = 0.0
 
     # ---- replies --------------------------------------------------------
     def read_text(self, symbol: str, interval: str | None = None) -> str:
@@ -137,7 +138,12 @@ class QuobotChat:
             now = pd.Timestamp.now(tz="UTC")
             nxt = now.floor(f"{self.picks_every}min") + pd.Timedelta(minutes=self.picks_every)
         text = picks_message(found, stats, self.interval, nxt)
-        if send and (found or self.send_empty):
+        if send and found:
+            from .tg_format import picks_message as one
+            for item in found:  # one clear signal per message
+                telegram.send(one([item], stats, self.interval, None), html=True)
+        elif send and self.send_empty and time.time() - self.empty_sent > 1800:
+            self.empty_sent = time.time()  # "nothing now" at most every 30 minutes
             telegram.send(text, html=True)
         print(f"[picks] {len(found)} pick(s), {stats}")
         return text

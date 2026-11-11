@@ -38,12 +38,15 @@ def _fmt(p: float) -> str:
 def _hit_rate(d: pd.DataFrame, sign: int, threshold: float, expiry: int):
     """How often a signal in the same direction and at least as strong was
     right `expiry` candles later, on this data (excluding warm-up)."""
+    from .signals import lead
     h = d.iloc[100:]
-    fut = h["close"].shift(-expiry)
+    L = lead()
+    base = h["close"].shift(-L)
+    fut = h["close"].shift(-(L + expiry))
     mask = (np.sign(h["score"]) == sign) & (h["score"].abs() >= threshold) & fut.notna()
     if sign == 0 or mask.sum() == 0:
         return float("nan"), 0
-    right = (fut[mask] > h["close"][mask]) if sign > 0 else (fut[mask] < h["close"][mask])
+    right = (fut[mask] > base[mask]) if sign > 0 else (fut[mask] < base[mask])
     return float(right.mean()), int(mask.sum())
 
 

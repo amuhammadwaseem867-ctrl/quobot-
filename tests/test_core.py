@@ -135,7 +135,8 @@ def test_bot_replies():
         assert not p.stack and len(r) < 4096
 
 
-def test_study_finds_no_edge_in_noise_and_saves(tmp_path):
+def test_study_finds_no_edge_in_noise_and_saves(tmp_path, monkeypatch):
+    monkeypatch.setenv("QUOTEX_LEAD", "0")  # this seed was checked with immediate entry
     from today_trader.study import load_study, save_study, similar_setups, study
     rng = np.random.default_rng(1)
     n = 6000
@@ -177,7 +178,7 @@ def test_picks_flow(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     found, stats = picks.find_picks(["EURUSD", "GBPUSD", "XAUUSD"], "5m", 3, demo=True)
     assert stats["scanned"] == 3
-    assert "Safe picks" in picks_message(found, stats, "5m")
+    assert "Quotex scan" in picks_message(found, stats, "5m")
     p = picks.Pick("EURUSD", "CALL", "5m", 1, "2026-11-10T15:05:00+00:00", "2026-11-10T15:10:00+00:00",
                    1.0, float("nan"), 50, 50, 3, "x")
     p.result, p.exit_price = "WIN", 1.1

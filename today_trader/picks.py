@@ -23,7 +23,7 @@ from . import data
 from . import localtime as lt
 from .engine import analyze_many
 from .market_read import read_market
-from .signals import DEFAULT_THRESHOLD
+from .signals import DEFAULT_THRESHOLD, lead
 from .study import load_study, study_is_recent
 
 LOG_FILE = Path("quobot_picks.csv")
@@ -127,7 +127,9 @@ def find_picks(symbols, interval: str, top: int = 3, threshold: float = DEFAULT_
         if rejects:
             rejected += 1
             continue
-        entry = m.signal.time + step
+        entry = m.signal.time + step * (1 + lead())
+        if not demo and lead() and pd.Timestamp.now(tz="UTC") > entry - pd.Timedelta(seconds=15):
+            continue  # too late to place it in time
         p = Pick(
             symbol=s.symbol, direction="CALL" if m.signal.score > 0 else "PUT", interval=interval,
             expiry=expiry, entry_time=entry.isoformat(), end_time=(entry + step * expiry).isoformat(),
@@ -137,9 +139,38 @@ def find_picks(symbols, interval: str, top: int = 3, threshold: float = DEFAULT_
         )
         picks.append((p, m))
     picks.sort(key=lambda x: -x[0].safety)
+    picks = _no_conflicts(picks)
     stats = {"scanned": len(sigs) + len(errors), "signals": len(candidates), "rejected": rejected,
              "errors": len(errors)}
     return picks[:top], stats
+
+
+def _exposure(symbol: str, direction: str) -> dict:
+    """Which currencies a trade bets up (+1) or down (-1). EURUSD CALL = EUR up, USD down."""
+    s = symbol.upper()
+    for q in ("USDT", "USDC"):
+        if s.endswith(q):
+            s = s[:-len(q)] + "USD"
+    sign = 1 if direction == "CALL" else -1
+    if s in ("XAUUSD", "XAGUSD"):
+        return {s[:3]: sign, "USD": -sign}
+    if len(s) == 6 and s.isalpha():
+        return {s[:3]: sign, s[3:]: -sign}
+    return {s: sign}
+
+
+def _no_conflicts(picks):
+    """Keep the safest picks that don't contradict each other: never two
+    signals on one pair, and never one currency expected up and down at once
+    (e.g. EURUSD CALL and USDCHF CALL both bet on USD in opposite ways)."""
+    kept, seen = [], {}
+    for p, m in picks:
+        exp = _exposure(p.symbol, p.direction)
+        if any(q.symbol == p.symbol for q, _ in kept) or any(seen.get(c, v) != v for c, v in exp.items()):
+            continue
+        kept.append((p, m))
+        seen.update(exp)
+    return kept
 
 
 def check_result(p: Pick, demo: bool = False) -> Pick | None:
@@ -158,6 +189,11 @@ def check_result(p: Pick, demo: bool = False) -> Pick | None:
             return p
         return None
     exit_price = float(row["close"].iloc[-1])
+    if lead():
+        # the trade opened at `entry`: use the price there, not at the signal
+        start = df[df.index <= pd.Timestamp(p.entry_time) - step]
+        if not start.empty:
+            p.entry_price = float(start["close"].iloc[-1])
     if math.isclose(exit_price, p.entry_price, rel_tol=1e-9):
         res = "DRAW"
     elif (exit_price > p.entry_price) == (p.direction == "CALL"):

@@ -27,7 +27,18 @@ from . import candles, levels
 from .indicators import add_all, ema
 from .sessions import session_quality
 
-DEFAULT_THRESHOLD = 40  # |score| needed before suggesting a direction
+DEFAULT_THRESHOLD = 40
+
+
+def lead() -> int:
+    """Candles between the signal and the trade. 1 = the signal is sent one
+    candle early so there is time to open the trade; every win rate is then
+    measured from the price at the real entry, not at the signal."""
+    import os
+    try:
+        return max(0, int(os.getenv("QUOTEX_LEAD", "1")))
+    except ValueError:
+        return 1  # |score| needed before suggesting a direction
 HTF_FACTOR = 5          # higher timeframe = 5x the trading timeframe (1m -> 5m, 5m -> 25m)
 GROUPS = {
     "trend": ["ema_stack", "ema50", "di", "supertrend", "heikin_ashi"],

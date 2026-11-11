@@ -28,7 +28,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .signals import GROUPS, score_frame
+from .signals import GROUPS, lead, score_frame
 
 SETTINGS_FILE = Path("quobot_settings.json")
 
@@ -95,11 +95,12 @@ def similar_setups(df: pd.DataFrame, expiry: int = 1, k: int = 150, crypto: bool
     d = d.iloc[100:]
     X = np.nan_to_num(_feature_matrix(d))
     now = X[-1]
-    past = X[:-expiry - 1] if len(X) > expiry + 1 else X[:0]
+    L = lead()
+    past = X[:-(expiry + L) - 1] if len(X) > expiry + L + 1 else X[:0]
     if len(past) < 50:
         return SimilarResult(0, float("nan"), 0, 1, float("nan"), expiry, len(d))
     close = d["close"].values
-    fut = close[expiry:len(past) + expiry] - close[:len(past)]
+    fut = close[L + expiry:len(past) + L + expiry] - close[L:len(past) + L]
     dist = np.sqrt(((past - now) ** 2).sum(axis=1))
     k = min(k, len(past))
     idx = np.argpartition(dist, k - 1)[:k]
@@ -149,21 +150,25 @@ class StudyResult:
 
 
 def _evaluate(d: pd.DataFrame, threshold: float, min_agree: int, expiry: int, payout: float) -> Trial:
-    fut = d["close"].shift(-expiry)
+    L = lead()
+    base = d["close"].shift(-L)
+    fut = d["close"].shift(-(L + expiry))
     ok = fut.notna()
     call = (d["score"] >= threshold) & (d["confluence"] >= min_agree) & ok
     put = (d["score"] <= -threshold) & (d["confluence"] >= min_agree) & ok
-    wins = int(((call & (fut > d["close"])) | (put & (fut < d["close"]))).sum())
+    wins = int(((call & (fut > base)) | (put & (fut < base))).sum())
     n = int((call | put).sum())
     wr = wins / n if n else float("nan")
     return Trial(threshold, min_agree, expiry, n, wr, wins * payout - (n - wins))
 
 
 def _breakdown(d: pd.DataFrame, t: Trial) -> tuple[dict, dict, dict]:
-    fut = d["close"].shift(-t.expiry)
+    L = lead()
+    base = d["close"].shift(-L)
+    fut = d["close"].shift(-(L + t.expiry))
     sig = ((d["score"].abs() >= t.threshold) & (d["confluence"] >= t.min_agree) & fut.notna())
     s = d[sig]
-    win = np.where(s["score"] > 0, fut[sig] > s["close"], fut[sig] < s["close"])
+    win = np.where(s["score"] > 0, fut[sig] > base[sig], fut[sig] < base[sig])
     s = s.assign(win=win)
     hour = s.groupby((s.index.hour // 4) * 4)["win"].agg(["mean", "count"]) if len(s) else pd.DataFrame()
     by_hour = {f"{h:02d}-{h + 4:02d} UTC": (float(r["mean"]), int(r["count"])) for h, r in hour.iterrows()}
@@ -228,7 +233,7 @@ def save_study(res: StudyResult, path: Path = SETTINGS_FILE) -> None:
     allr[_key(res.symbol, res.interval)] = {
         "best": res.best, "recommended": res.recommended, "verdict": res.verdict,
         "test": res.test, "test_low": res.test_low, "test_high": res.test_high,
-        "best_hours": _best_hours(res),
+        "best_hours": _best_hours(res), "lead": lead(),
         "candles": res.candles, "studied_at": pd.Timestamp.now(tz="UTC").isoformat(timespec="minutes"),
     }
     path.write_text(json.dumps(allr, indent=2))
@@ -244,7 +249,7 @@ def _best_hours(res) -> str:
 
 def study_is_recent(symbol: str, interval: str, hours: float = 12, path: Path = SETTINGS_FILE) -> bool:
     rec = load_study(symbol, interval, path)
-    if not rec or "studied_at" not in rec:
+    if not rec or "studied_at" not in rec or rec.get("lead", 0) != lead():
         return False
     age = pd.Timestamp.now(tz="UTC") - pd.Timestamp(rec["studied_at"])
     return age < pd.Timedelta(hours=hours)

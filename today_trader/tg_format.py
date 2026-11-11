@@ -397,38 +397,77 @@ def explain(m, max_reasons: int = 4) -> list[str]:
     return lines, ("Risk: " + "; ".join(risk) + ".") if risk else "Risk: nothing major against it right now."
 
 
+def pair_name(symbol: str) -> str:
+    """How the asset is written on Quotex, e.g. EUR/USD, GOLD, BTC/USD."""
+    s = symbol.upper()
+    special = {"XAUUSD": "GOLD (XAU/USD)", "XAGUSD": "SILVER (XAG/USD)", "USOIL": "USCRUDE", "UKOIL": "UKBRENT"}
+    if s in special:
+        return special[s]
+    for q in ("USDT", "USDC", "BUSD", "FDUSD"):
+        if s.endswith(q):
+            return f"{s[:-len(q)]}/USD"
+    if len(s) == 6 and s.isalpha():
+        return f"{s[:3]}/{s[3:]}"
+    return s
+
+
+def _tf_words(interval: str, candles: int = 1) -> str:
+    mins = MINUTES.get(interval, 1) * candles
+    return f"{mins} MINUTE" + ("S" if mins != 1 else "")
+
+
+def signal_card(p, m, n: int | None = None) -> list[str]:
+    """One Quotex signal in the BROKER / PAIR / TIMEFRAME layout."""
+    call = p.direction == "CALL"
+    entry, end = pd.Timestamp(p.entry_time), pd.Timestamp(p.end_time)
+    out = [f"📢 <b>QUOTEX SIGNAL{f' #{n}' if n else ''}</b>", "",
+           "🔷 <b>BROKER:</b> QUOTEX",
+           f"🔷 <b>PAIR:</b> {escape(pair_name(p.symbol))} (real market, NOT OTC)",
+           f"🔷 <b>TIMEFRAME:</b> {_tf_words(p.interval)}",
+           f"🔷 <b>EXPIRY:</b> {_tf_words(p.interval, p.expiry)}",
+           f"🔷 <b>ENTRY TIME:</b> {lt.hhmm(entry)} ({lt.label().split(',')[0]})",
+           f"🔷 <b>DIRECTION:</b> {'🟢 CALL ⬆️ (UP)' if call else '🔴 PUT ⬇️ (DOWN)'}",
+           ]
+    if not math.isnan(p.win_chance):
+        out.append(f"🔷 <b>WIN CHANCE:</b> {p.win_chance:.0%} (likely {p.win_low:.0%}-{p.win_high:.0%})")
+    else:
+        out.append("🔷 <b>WIN CHANCE:</b> not enough history yet")
+    out.append(f"🔷 <b>SAFETY:</b> {strength_bar(p.safety)} {p.safety:.0f}/100 · {p.confluence}/4 agree")
+    now = pd.Timestamp.now(tz="UTC")
+    secs = int((entry - now).total_seconds())
+    if secs > 0:
+        out += ["", f"⏳ <b>Get ready:</b> open the trade exactly at <b>{lt.hhmm(entry)}</b> "
+                    f"(in about {secs} sec), it ends at {lt.hhmm(end)}."]
+    else:
+        out += ["", f"⏳ Entry {lt.hhmm(entry)}, ends {lt.hhmm(end)}."]
+    why, risk = explain(m)
+    out.append(f"🧠 <b>Why {'UP' if call else 'DOWN'}:</b>")
+    out += [f"  {i}. {escape(r)}" for i, r in enumerate(why[:3], 1)]
+    out.append(f"⚠️ {escape(risk)}")
+    return out
+
+
 def picks_message(picks, stats: dict, interval: str, next_check: pd.Timestamp | None = None) -> str:
     now = pd.Timestamp.now(tz="UTC")
-    out = [f"🎯 <b>Safe picks</b> · {lt.hhmm(now)} ({lt.label()})", LINE]
     if not picks:
-        out.append(f"😴 <b>No safe trades right now.</b>")
-        out.append(f"Checked {stats.get('scanned', 0)} assets: {stats.get('signals', 0)} had a signal, "
-                   f"{stats.get('rejected', 0)} failed a safety check.")
-        out.append("Not trading is the safe choice when nothing passes. 🧘")
-    for i, (p, m) in enumerate(picks, 1):
-        icon, word = ("🟢", "CALL ⬆️ UP") if p.direction == "CALL" else ("🔴", "PUT ⬇️ DOWN")
-        entry, end = pd.Timestamp(p.entry_time), pd.Timestamp(p.end_time)
-        mins = MINUTES.get(p.interval, 1) * p.expiry
-        hit = f"{m.hit_rate:.0%} of {m.samples}" if m.samples >= 20 else "not enough cases yet"
-        out += ["",
-                f"<b>{i}. {icon} {escape(p.symbol)} — {word}</b>",
-                f"🛡 Safety: {strength_bar(p.safety)} <b>{p.safety:.0f}</b>/100",
-                (f"🎯 Win chance: <b>{p.win_chance:.0%}</b> (likely {p.win_low:.0%}-{p.win_high:.0%}, "
-                 f"from {escape(p.win_basis)})" if not math.isnan(p.win_chance)
-                 else "🎯 Win chance: not enough history yet"),
-                f"🕯 Candle: <b>{p.interval}</b> · ⏱ Expiry: <b>{mins} min</b>",
-                f"🕐 Enter at <b>{lt.hhmm(entry)}</b> · ends <b>{lt.hhmm(end)}</b>",
-                f"💰 Price now <code>{_p(p.entry_price)}</code>"
-                + ("" if math.isnan(p.stop) else
-                   f" · wrong if {'below' if p.direction == 'CALL' else 'above'} <code>{_p(p.stop)}</code>"),
-                f"🤝 {p.confluence}/4 groups agree · 📈 track record {hit}"]
-        why, risk = explain(m)
-        out.append(f"🧠 <b>Why {'UP' if p.direction == 'CALL' else 'DOWN'}:</b>")
-        out += [f"  {n}. {escape(r)}" for n, r in enumerate(why, 1)]
-        out.append(f"⚠️ {escape(risk)}")
+        out = [f"🎯 <b>Quotex scan</b> · {lt.hhmm(now)} ({lt.label()})", LINE,
+               ("🏖 <b>Weekend: forex markets are closed.</b> Quotex only shows OTC pairs now, which I can't "
+                "analyse, so no signals until the market opens Monday morning (PKT)."
+                if now.dayofweek >= 5 and not (now.dayofweek == 6 and now.hour >= 21) else
+                "😴 <b>No safe trades right now.</b>"),
+               f"Checked {stats.get('scanned', 0)} assets: {stats.get('signals', 0)} had a signal, "
+               f"{stats.get('rejected', 0)} failed a safety check.",
+               "Not trading is the safe choice when nothing passes. 🧘"]
+    else:
+        out = []
+        for i, (p, m) in enumerate(picks, 1):
+            if out:
+                out += ["", LINE, ""]
+            out += signal_card(p, m, i if len(picks) > 1 else None)
     if next_check is not None:
-        out += ["", f"⏭ Next check at {lt.hhmm(next_check)}. I'll send the result of each pick after it ends."]
-    out += ["", "<i>Send the asset name (e.g. EURUSD) for the full explanation.</i>", DISCLAIMER_SHORT]
+        out += ["", f"⏭ Next check at {lt.hhmm(next_check)}. I'll send the result of each trade after it ends."]
+    out += ["", "<i>Only real-market pairs: OTC prices come from Quotex itself and can't be analysed.</i>",
+            DISCLAIMER_SHORT]
     return "\n".join(out)
 
 
@@ -441,7 +480,7 @@ def result_message(p, tally: dict) -> str:
     done = tally["wins"] + tally["losses"]
     rate = f"{tally['wins'] / done:.0%}" if done else "-"
     return "\n".join([
-        f"{icon} <b>Result: {escape(p.symbol)} {p.direction} {arrow} — {p.result}</b>",
+        f"{icon} <b>Result: {escape(pair_name(p.symbol))} {p.direction} {arrow} — {p.result}</b>",
         f"Entry <code>{_p(p.entry_price)}</code> → close <code>{_p(p.exit_price)}</code> "
         f"({MINUTES.get(p.interval, 1) * p.expiry} min, ended {lt.hhmm(pd.Timestamp(p.end_time))})",
         f"📊 Today: <b>{tally['wins']}W / {tally['losses']}L</b>" + (f" / {tally['draws']}D" if tally["draws"] else "")
